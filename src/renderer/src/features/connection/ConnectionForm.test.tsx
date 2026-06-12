@@ -71,6 +71,7 @@ describe('ConnectionForm', () => {
       username: 'old-user',
       password: 'old-password',
       rootPath: '/',
+      lastLocalPath: '/workspace',
     }
     const onSave = vi.fn()
     render(<ConnectionForm target={target} onSave={onSave} onCancel={vi.fn()} />)
@@ -144,5 +145,49 @@ describe('ConnectionForm', () => {
         secretAccessKey: 'secret-key',
       })
     )
+  })
+
+  it('S3バケットを取得して候補から選択できる', async () => {
+    const listS3Buckets = vi.fn().mockResolvedValue(['archive-bucket', 'logs-bucket'])
+    Object.defineProperty(window, 'hedgeport', {
+      configurable: true,
+      value: { listS3Buckets },
+    })
+    render(<ConnectionForm onSave={vi.fn()} onCancel={vi.fn()} />)
+
+    fireEvent.click(screen.getByLabelText('S3'))
+    fireEvent.change(screen.getByLabelText('Region'), { target: { value: 'ap-northeast-1' } })
+    fireEvent.change(screen.getByLabelText('Access Key ID'), { target: { value: 'access-key' } })
+    fireEvent.change(screen.getByLabelText('Secret Access Key'), { target: { value: 'secret-key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch buckets' }))
+
+    const select = (await screen.findByLabelText('Available buckets')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'logs-bucket' } })
+
+    expect((screen.getByLabelText('Bucket') as HTMLInputElement).value).toBe('logs-bucket')
+    expect(listS3Buckets).toHaveBeenCalledWith({
+      region: 'ap-northeast-1',
+      accessKeyId: 'access-key',
+      secretAccessKey: 'secret-key',
+      sessionToken: '',
+    })
+  })
+
+  it('バケット取得に失敗しても直接入力欄を維持する', async () => {
+    const listS3Buckets = vi.fn().mockRejectedValue(new Error('Access denied'))
+    Object.defineProperty(window, 'hedgeport', {
+      configurable: true,
+      value: { listS3Buckets },
+    })
+    render(<ConnectionForm onSave={vi.fn()} onCancel={vi.fn()} />)
+
+    fireEvent.click(screen.getByLabelText('S3'))
+    fireEvent.change(screen.getByLabelText('Bucket'), { target: { value: 'manual-bucket' } })
+    fireEvent.change(screen.getByLabelText('Access Key ID'), { target: { value: 'access-key' } })
+    fireEvent.change(screen.getByLabelText('Secret Access Key'), { target: { value: 'secret-key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch buckets' }))
+
+    expect(await screen.findByText('Access denied')).toBeTruthy()
+    expect((screen.getByLabelText('Bucket') as HTMLInputElement).value).toBe('manual-bucket')
   })
 })

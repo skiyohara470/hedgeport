@@ -1,3 +1,7 @@
+/**
+ * まだ未接続のプレビュー画面プレースホルダ。
+ * 将来は選択中ファイルの内容や diff 表示をここへ載せる。
+ */
 export function PreviewWindow() {
   return (
     <main className="preview-window">

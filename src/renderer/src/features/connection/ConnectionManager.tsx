@@ -12,6 +12,10 @@ interface ConnectionManagerProps {
   variant?: 'welcome' | 'tab'
 }
 
+/**
+ * 接続選択画面と接続編集フォームの切り替えを担う。
+ * 一覧表示時は選択 UI、編集中は ConnectionForm へ責務を委譲する。
+ */
 export function ConnectionManager({
   targets,
   onSelect,
@@ -19,6 +23,7 @@ export function ConnectionManager({
   onDelete,
   variant = 'welcome',
 }: ConnectionManagerProps) {
+  // undefined: フォームを閉じる, null: 新規作成, ConnectionTarget: 既存編集
   const [formTarget, setFormTarget] = useState<ConnectionTarget | null | undefined>(undefined)
   const isFormOpen = formTarget !== undefined
 

@@ -1,19 +1,9 @@
 // 接続先（SFTP / S3 など）を抽象化したストレージ操作契約。
 // 具体実装（SftpProvider / S3Provider）は本ファイルに置かず、別タスクで追加する。
 
-/**
- * ストレージ上の1エントリ（ファイルまたはディレクトリ）。
- */
-export interface StorageEntry {
-  /** エントリ名（パス末尾の要素） */
-  name: string
-  /** ルートからの絶対パス */
-  path: string
-  /** 種別 */
-  type: 'file' | 'directory'
-  /** ファイルのバイトサイズ。directory では持たない */
-  size?: number
-}
+import type { StorageEntry } from '../../shared/storage'
+
+export type { StorageEntry } from '../../shared/storage'
 
 /**
  * 接続先ストレージに対する共通操作の契約。

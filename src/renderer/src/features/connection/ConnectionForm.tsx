@@ -11,10 +11,17 @@ interface ConnectionFormProps {
 
 type ConnectionKind = ConnectionTarget['kind']
 
+/**
+ * 永続化前の新規接続に一意な仮 ID を振る。
+ */
 function createId(): string {
   return `connection-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+/**
+ * SFTP / S3 の接続設定を作成・編集するフォーム。
+ * kind ごとに必要な入力をまとめ、保存前検証と疎通確認もここで行う。
+ */
 export function ConnectionForm({ target, onSave, onCancel, onDelete }: ConnectionFormProps) {
   const [kind, setKind] = useState<ConnectionKind>(target?.kind ?? 'sftp')
   const [name, setName] = useState(target?.name ?? '')
@@ -33,7 +40,14 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
   const [formError, setFormError] = useState<string | null>(null)
   const [isTesting, setIsTesting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isLoadingBuckets, setIsLoadingBuckets] = useState(false)
+  const [bucketOptions, setBucketOptions] = useState<string[]>([])
+  const [bucketError, setBucketError] = useState<string | null>(null)
 
+  /**
+   * 現在の入力値を ConnectionTarget 契約へ詰め直す。
+   * UI 上の文字列入力を main 側へ渡す前の整形ポイント。
+   */
   const buildTarget = (): ConnectionTarget => {
     const id = target?.id ?? createId()
     const trimmedName = name.trim()
@@ -43,6 +57,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
         id,
         kind,
         name: trimmedName,
+        lastLocalPath: target?.lastLocalPath,
         host: host.trim(),
         port: Number(port),
         username: username.trim(),
@@ -55,6 +70,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       id,
       kind,
       name: trimmedName,
+      lastLocalPath: target?.lastLocalPath,
       region: region.trim(),
       bucket: bucket.trim(),
       prefix: prefix.trim(),
@@ -64,6 +80,9 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     }
   }
 
+  /**
+   * 接続種別ごとの必須項目を確認し、最初のエラー文言だけ返す。
+   */
   const validate = (connection: ConnectionTarget): string | null => {
     if (!connection.name) return 'Display name is required.'
     if (connection.kind === 'sftp') {
@@ -79,6 +98,9 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     return null
   }
 
+  /**
+   * 保存時は先にローカル検証を行い、通過した設定だけ親へ渡す。
+   */
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const connection = buildTarget()
@@ -99,6 +121,10 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     }
   }
 
+  /**
+   * 現在の入力値で main process へ疎通確認を依頼する。
+   * 保存前でも実行できるよう、buildTarget の結果をそのまま使う。
+   */
   const testConnection = async (): Promise<void> => {
     const connection = buildTarget()
     const validationError = validate(connection)
@@ -121,6 +147,9 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     }
   }
 
+  /**
+   * 既存接続の削除要求を親へ伝える。
+   */
   const deleteConnection = async (): Promise<void> => {
     if (!onDelete) return
     try {
@@ -131,6 +160,36 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       setFormError(error instanceof Error ? error.message : 'Could not delete this connection.')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  /**
+   * S3 認証情報から候補 bucket を取得する。
+   * region 単位で絞り込まれた一覧を出し、1件だけなら自動選択する。
+   */
+  const fetchBuckets = async (): Promise<void> => {
+    if (!region.trim() || !accessKeyId.trim() || !secretAccessKey) {
+      setBucketError('Region, Access Key ID, and Secret Access Key are required.')
+      return
+    }
+
+    try {
+      setIsLoadingBuckets(true)
+      setBucketError(null)
+      const buckets = await window.hedgeport.listS3Buckets({
+        region: region.trim(),
+        accessKeyId: accessKeyId.trim(),
+        secretAccessKey,
+        sessionToken: sessionToken.trim(),
+      })
+      setBucketOptions(buckets)
+      if (buckets.length === 0) setBucketError('No buckets were found in this region.')
+      if (buckets.length === 1 && bucket !== buckets[0]) setBucket(buckets[0])
+    } catch (error) {
+      setBucketOptions([])
+      setBucketError(error instanceof Error ? error.message : 'Could not load S3 buckets.')
+    } finally {
+      setIsLoadingBuckets(false)
     }
   }
 
@@ -228,17 +287,9 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
         </div>
       ) : (
         <div className="form-grid">
-          <label className="form-field">
+          <label className="form-field form-field-wide">
             <span>Region</span>
             <input value={region} required onChange={(event) => setRegion(event.target.value)} />
-          </label>
-          <label className="form-field">
-            <span>Bucket</span>
-            <input value={bucket} required onChange={(event) => setBucket(event.target.value)} />
-          </label>
-          <label className="form-field form-field-wide">
-            <span>Prefix</span>
-            <input value={prefix} placeholder="optional/path" onChange={(event) => setPrefix(event.target.value)} />
           </label>
           <label className="form-field">
             <span>Access Key ID</span>
@@ -268,6 +319,46 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
               placeholder="Optional for temporary credentials"
               onChange={(event) => setSessionToken(event.target.value)}
             />
+          </label>
+          <div className="bucket-picker form-field-wide">
+            <button
+              className="secondary-action-button"
+              type="button"
+              disabled={isLoadingBuckets || isSaving || isTesting}
+              onClick={() => void fetchBuckets()}
+            >
+              {isLoadingBuckets ? 'Fetching buckets...' : 'Fetch buckets'}
+            </button>
+            {bucketError && <p className="bucket-error">{bucketError}</p>}
+          </div>
+          <label className="form-field form-field-wide">
+            <span>Bucket</span>
+            <input
+              value={bucket}
+              required
+              placeholder="bucket-name"
+              onChange={(event) => setBucket(event.target.value)}
+            />
+          </label>
+          {bucketOptions.length > 0 && (
+            <label className="form-field form-field-wide">
+              <span>Available buckets</span>
+              <select
+                value={bucketOptions.includes(bucket) ? bucket : ''}
+                onChange={(event) => setBucket(event.target.value)}
+              >
+                <option value="">Select a bucket</option>
+                {bucketOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="form-field form-field-wide">
+            <span>Prefix</span>
+            <input value={prefix} placeholder="optional/path" onChange={(event) => setPrefix(event.target.value)} />
           </label>
         </div>
       )}
