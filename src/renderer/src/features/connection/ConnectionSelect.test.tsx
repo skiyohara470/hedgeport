@@ -14,8 +14,27 @@ afterEach(() => {
 })
 
 const targets: ConnectionTarget[] = [
-  { id: 'sftp-1', name: '社内SFTP', kind: 'sftp' },
-  { id: 's3-1', name: 'バックアップS3', kind: 's3' },
+  {
+    id: 'sftp-1',
+    name: '社内SFTP',
+    kind: 'sftp',
+    host: 'sftp.example.com',
+    port: 22,
+    username: 'user',
+    password: '',
+    rootPath: '/',
+  },
+  {
+    id: 's3-1',
+    name: 'バックアップS3',
+    kind: 's3',
+    region: 'ap-northeast-1',
+    bucket: 'backup',
+    prefix: '',
+    accessKeyId: 'access-key',
+    secretAccessKey: 'secret-key',
+    sessionToken: '',
+  },
 ]
 
 describe('ConnectionSelect', () => {
@@ -66,5 +85,16 @@ describe('ConnectionSelect', () => {
 
     // Then: 選択可能な button は1つも無い
     expect(screen.queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('編集ボタンをクリックすると対象を引数に onEdit を呼ぶ', () => {
+    const onSelect = vi.fn()
+    const onEdit = vi.fn()
+    render(<ConnectionSelect targets={targets} onSelect={onSelect} onEdit={onEdit} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit 社内SFTP' }))
+
+    expect(onEdit).toHaveBeenCalledWith(targets[0])
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })

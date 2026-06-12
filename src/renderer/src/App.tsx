@@ -1,27 +1,62 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { ConnectionSelect } from './features/connection/ConnectionSelect'
+import { ConnectionManager } from './features/connection/ConnectionManager'
 import type { ConnectionTarget } from './features/connection/connectionTypes'
 import { FilerWorkspace } from './features/filer/FilerWorkspace'
 import { PreviewWindow } from './features/preview/PreviewWindow'
 
-const connectionTargets: ConnectionTarget[] = [
-  { id: 'sftp-placeholder', name: 'SFTP connection', kind: 'sftp' },
-  { id: 's3-placeholder', name: 'S3 connection', kind: 's3' },
-]
-
 export function App() {
+  const [targets, setTargets] = useState<ConnectionTarget[]>([])
   const [selectedTarget, setSelectedTarget] = useState<ConnectionTarget | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [storageError, setStorageError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.hedgeport
+      .loadConnections()
+      .then(setTargets)
+      .catch((error: unknown) => {
+        setStorageError(error instanceof Error ? error.message : 'Could not load connections.')
+      })
+      .finally(() => setIsLoading(false))
+  }, [])
+
+  const saveTarget = async (target: ConnectionTarget): Promise<void> => {
+    const exists = targets.some((item) => item.id === target.id)
+    const next = exists ? targets.map((item) => (item.id === target.id ? target : item)) : [...targets, target]
+    await window.hedgeport.saveConnections(next)
+    setTargets(next)
+    setStorageError(null)
+    setSelectedTarget((current) => (current?.id === target.id ? target : current))
+  }
+
+  const deleteTarget = async (target: ConnectionTarget): Promise<void> => {
+    const next = targets.filter((item) => item.id !== target.id)
+    await window.hedgeport.saveConnections(next)
+    setTargets(next)
+    setStorageError(null)
+    setSelectedTarget((current) => (current?.id === target.id ? null : current))
+  }
 
   if (window.location.hash === '#preview') {
     return <PreviewWindow />
+  }
+
+  if (isLoading) {
+    return (
+      <main className="connection-screen">
+        <p className="loading-state">Loading connections...</p>
+      </main>
+    )
   }
 
   if (selectedTarget) {
     return (
       <FilerWorkspace
         target={selectedTarget}
-        targets={connectionTargets}
+        targets={targets}
+        onSaveTarget={saveTarget}
+        onDeleteTarget={deleteTarget}
         onDisconnect={() => setSelectedTarget(null)}
       />
     )
@@ -30,15 +65,13 @@ export function App() {
   return (
     <main className="connection-screen">
       <section className="connection-card">
-        <div className="brand-mark">HP</div>
-        <p className="eyebrow">HedgePort</p>
-        <h1>Choose a connection</h1>
-        <p className="muted">Select the storage workspace to open.</p>
-        <ConnectionSelect targets={connectionTargets} onSelect={setSelectedTarget} />
-        <button className="secondary-button" type="button" disabled>
-          Add connection
-        </button>
-        <p className="scope-note">Connection persistence and authentication are planned for a later phase.</p>
+        {storageError && <p className="storage-error">{storageError}</p>}
+        <ConnectionManager
+          targets={targets}
+          onSelect={setSelectedTarget}
+          onSave={saveTarget}
+          onDelete={deleteTarget}
+        />
       </section>
     </main>
   )

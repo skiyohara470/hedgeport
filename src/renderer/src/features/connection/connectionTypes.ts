@@ -1,11 +1,10 @@
 /**
- * 起動時の接続先選択画面が扱う接続先1件。
+ * 接続先選択画面と将来の StorageProvider 生成が扱う接続設定。
+ * main/renderer間で共有する契約を再公開する。
  */
-export interface ConnectionTarget {
-  /** 一意な識別子 */
-  id: string
-  /** 表示名 */
-  name: string
-  /** 接続先の種別 */
-  kind: 'sftp' | 's3'
-}
+export type {
+  ConnectionTarget,
+  ConnectionTestResult,
+  S3ConnectionTarget,
+  SftpConnectionTarget,
+} from '../../../../shared/connections'

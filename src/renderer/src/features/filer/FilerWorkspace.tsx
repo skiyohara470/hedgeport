@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { ConnectionSelect } from '../connection/ConnectionSelect'
+import { ConnectionManager } from '../connection/ConnectionManager'
 import type { ConnectionTarget } from '../connection/connectionTypes'
 import { activateTab, closeTab, openTab, type TabsState } from './tabsModel'
 
 interface FilerWorkspaceProps {
   target: ConnectionTarget
   targets: ConnectionTarget[]
+  onSaveTarget: (target: ConnectionTarget) => Promise<void> | void
+  onDeleteTarget: (target: ConnectionTarget) => Promise<void> | void
   onDisconnect: () => void
 }
 
@@ -142,23 +144,36 @@ function LocalFilePane() {
 function TabConnectionSelect({
   targets,
   onSelect,
+  onSave,
+  onDelete,
 }: {
   targets: ConnectionTarget[]
   onSelect: (target: ConnectionTarget) => void
+  onSave: (target: ConnectionTarget) => Promise<void> | void
+  onDelete: (target: ConnectionTarget) => Promise<void> | void
 }) {
   return (
     <section className="tab-connection-select">
       <div className="tab-connection-card">
-        <p className="eyebrow">New tab</p>
-        <h1>Choose a connection</h1>
-        <p className="muted">Select the storage workspace to open in this tab.</p>
-        <ConnectionSelect targets={targets} onSelect={onSelect} />
+        <ConnectionManager
+          targets={targets}
+          onSelect={onSelect}
+          onSave={onSave}
+          onDelete={onDelete}
+          variant="tab"
+        />
       </div>
     </section>
   )
 }
 
-export function FilerWorkspace({ target, targets, onDisconnect }: FilerWorkspaceProps) {
+export function FilerWorkspace({
+  target,
+  targets,
+  onSaveTarget,
+  onDeleteTarget,
+  onDisconnect,
+}: FilerWorkspaceProps) {
   const [tabs, setTabs] = useState<TabsState>({
     tabs: [{ id: 'root', title: target.name }],
     activeId: 'root',
@@ -203,6 +218,39 @@ export function FilerWorkspace({ target, targets, onDisconnect }: FilerWorkspace
   }
 
   const activeTarget = tabs.activeId ? tabTargets[tabs.activeId] : null
+  const saveTarget = async (savedTarget: ConnectionTarget): Promise<void> => {
+    await onSaveTarget(savedTarget)
+    setTabTargets((current) => {
+      const next = { ...current }
+      for (const [tabId, tabTarget] of Object.entries(next)) {
+        if (tabTarget?.id === savedTarget.id) next[tabId] = savedTarget
+      }
+      return next
+    })
+    setTabs((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) =>
+        tabTargets[tab.id]?.id === savedTarget.id ? { ...tab, title: savedTarget.name } : tab
+      ),
+    }))
+  }
+
+  const deleteTarget = async (deletedTarget: ConnectionTarget): Promise<void> => {
+    await onDeleteTarget(deletedTarget)
+    setTabTargets((current) => {
+      const next = { ...current }
+      for (const [tabId, tabTarget] of Object.entries(next)) {
+        if (tabTarget?.id === deletedTarget.id) next[tabId] = null
+      }
+      return next
+    })
+    setTabs((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) =>
+        tabTargets[tab.id]?.id === deletedTarget.id ? { ...tab, title: 'New tab' } : tab
+      ),
+    }))
+  }
 
   return (
     <main className="workspace">
@@ -263,7 +311,12 @@ export function FilerWorkspace({ target, targets, onDisconnect }: FilerWorkspace
       </header>
 
       {!activeTarget ? (
-        <TabConnectionSelect targets={targets} onSelect={selectConnection} />
+        <TabConnectionSelect
+          targets={targets}
+          onSelect={selectConnection}
+          onSave={saveTarget}
+          onDelete={deleteTarget}
+        />
       ) : (
         <div className={showLocalFiles ? 'pane-grid split' : 'pane-grid'}>
           <RemoteFilePane label="Remote files" path="/" />

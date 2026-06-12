@@ -110,6 +110,12 @@ button:disabled {
   list-style: none;
 }
 
+.connection-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
 .connection-button {
   display: grid;
   grid-template-columns: 56px 1fr 20px;
@@ -117,6 +123,29 @@ button:disabled {
   width: 100%;
   padding: 15px;
   text-align: left;
+}
+
+.connection-edit {
+  display: grid;
+  width: 50px;
+  padding: 0;
+  place-items: center;
+  color: #879497;
+  background: #172022;
+}
+
+.connection-edit svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.connection-edit:hover:not(:disabled) {
+  color: #c3e1d9;
 }
 
 .connection-button:hover .connection-arrow {
@@ -149,9 +178,205 @@ button:disabled {
   width: 100%;
 }
 
+.primary-button {
+  min-width: 150px;
+  color: #10201c;
+  border-color: #8dc3b4;
+  background: #82b8a9;
+  font-weight: 700;
+}
+
+.primary-button:hover:not(:disabled) {
+  color: #0d1715;
+  border-color: #a6d5c9;
+  background: #99cabc;
+}
+
+.text-button {
+  color: #9eabad;
+  border-color: transparent;
+  background: transparent;
+}
+
+.text-button:hover:not(:disabled) {
+  color: #e8edf0;
+  border-color: transparent;
+  background: #273235;
+}
+
 .scope-note {
   margin: 16px 0 0;
   font-size: 12px;
+}
+
+.empty-state {
+  margin: 24px 0;
+  padding: 20px;
+  color: #92a0a3;
+  border: 1px dashed #3b484a;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.connection-form {
+  display: grid;
+  gap: 20px;
+}
+
+.form-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.form-heading h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.kind-selector {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #354144;
+  border-radius: 10px;
+}
+
+.kind-selector legend {
+  padding: 0 6px;
+  color: #92a0a3;
+  font-size: 12px;
+}
+
+.kind-selector label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.connection-type-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 16px;
+  color: #92a0a3;
+  border: 1px solid #354144;
+  border-radius: 10px;
+}
+
+.connection-type-display strong {
+  color: #b8e0d5;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-field {
+  display: grid;
+  gap: 7px;
+  color: #aab5b7;
+  font-size: 13px;
+}
+
+.form-field-wide {
+  grid-column: 1 / -1;
+}
+
+.form-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  color: #e8edf0;
+  border: 1px solid #394649;
+  border-radius: 8px;
+  outline: none;
+  background: #12191a;
+  font: inherit;
+}
+
+.form-field input:focus {
+  border-color: #70a597;
+  box-shadow: 0 0 0 2px rgb(112 165 151 / 15%);
+}
+
+.form-field input::placeholder {
+  color: #5f6d70;
+}
+
+.form-note {
+  margin: 0;
+  color: #829093;
+  font-size: 12px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.form-primary-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.secondary-action-button {
+  color: #b8c2c4;
+  background: #1a2325;
+}
+
+.connection-result {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.connection-result.success {
+  color: #b8e0d5;
+  border-color: #46675f;
+  background: #20332e;
+}
+
+.connection-result.error,
+.storage-error {
+  color: #f2b5b0;
+  border-color: #67413f;
+  background: #2d2020;
+}
+
+.storage-error {
+  margin: 0 0 20px;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: 8px;
+}
+
+.loading-state {
+  color: #aab5b7;
+}
+
+.danger-button {
+  color: #eeaaa5;
+  border-color: #67413f;
+  background: #2d2020;
+}
+
+.danger-button:hover:not(:disabled) {
+  color: #ffd0cc;
+  border-color: #92534f;
+  background: #3b2726;
 }
 
 .workspace {
@@ -460,5 +685,24 @@ th {
 
   .toolbar-actions {
     gap: 3px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-field-wide {
+    grid-column: auto;
+  }
+
+  .form-actions,
+  .form-primary-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .form-primary-actions {
+    width: 100%;
+    margin-left: 0;
   }
 }
