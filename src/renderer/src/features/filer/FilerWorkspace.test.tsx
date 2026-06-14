@@ -325,6 +325,75 @@ describe('RemoteFilePane', () => {
     expect(screen.getAllByRole('row')[2].textContent).toContain('charlie.txt')
     expect(screen.getAllByRole('row')[3].textContent).toContain('alpha.txt')
   })
+
+  it('S3 は初期ページで bucket をディレクトリ表示し、root では mutation を無効化する', async () => {
+    const s3Target: ConnectionTarget = {
+      id: 's3-1',
+      name: 'Account S3',
+      kind: 's3',
+      region: 'ap-northeast-1',
+      accessKeyId: 'AKIA...',
+      secretAccessKey: 'secret',
+      sessionToken: '',
+    }
+    const listStorage = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { name: 'bucket-a', path: '/bucket-a', type: 'directory' },
+        { name: 'bucket-b', path: '/bucket-b', type: 'directory' },
+      ])
+      .mockResolvedValueOnce([
+        { name: 'reports', path: '/bucket-a/reports', type: 'directory' },
+        { name: 'a.txt', path: '/bucket-a/a.txt', type: 'file', size: 3 },
+      ])
+      .mockResolvedValueOnce([
+        { name: 'bucket-a', path: '/bucket-a', type: 'directory' },
+        { name: 'bucket-b', path: '/bucket-b', type: 'directory' },
+      ])
+    Object.defineProperty(window, 'hedgeport', { configurable: true, value: { listStorage } })
+
+    render(<RemoteFilePane target={s3Target} />)
+
+    // 初期ページ = bucket 一覧。
+    expect(await screen.findByText('bucket-a')).toBeTruthy()
+    expect(screen.getByText('bucket-b')).toBeTruthy()
+    expect(listStorage).toHaveBeenCalledWith(s3Target, '/')
+    // root では New Folder… / Open with… が無効。
+    expect((screen.getByRole('button', { name: 'New Folder…' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Open with…' }) as HTMLButtonElement).disabled).toBe(true)
+
+    // bucket-a をダブルクリックで開く（bucket ルートへ移動）。
+    fireEvent.doubleClick(screen.getByText('bucket-a').closest('tr')!)
+    expect(await screen.findByText('reports')).toBeTruthy()
+    await waitFor(() => expect(listStorage).toHaveBeenLastCalledWith(s3Target, '/bucket-a'))
+    // bucket 内では New Folder… が有効に戻る。
+    expect((screen.getByRole('button', { name: 'New Folder…' }) as HTMLButtonElement).disabled).toBe(false)
+
+    // Up で bucket 一覧（root）へ戻る。
+    fireEvent.click(screen.getByRole('button', { name: 'Parent directory' }))
+    await waitFor(() => expect(listStorage).toHaveBeenLastCalledWith(s3Target, '/'))
+  })
+
+  it('S3 root で bucket が 0 件なら専用の空状態を表示する', async () => {
+    const s3Target: ConnectionTarget = {
+      id: 's3-1',
+      name: 'Account S3',
+      kind: 's3',
+      region: 'ap-northeast-1',
+      accessKeyId: 'AKIA...',
+      secretAccessKey: 'secret',
+      sessionToken: '',
+    }
+    const listStorage = vi.fn().mockResolvedValue([])
+    Object.defineProperty(window, 'hedgeport', { configurable: true, value: { listStorage } })
+
+    render(<RemoteFilePane target={s3Target} />)
+
+    expect(await screen.findByText('No buckets are accessible in this region.')).toBeTruthy()
+    // 検索結果 0 件は既存文言を維持する。
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'zzz' } })
+    expect(await screen.findByText('No files match this search.')).toBeTruthy()
+  })
 })
 
 describe('FilerWorkspace ファイル操作', () => {

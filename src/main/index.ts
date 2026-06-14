@@ -13,13 +13,13 @@ import {
 } from './externalEdit'
 import { chooseApplicationAndOpen, readLocalText, writeLocalText } from './fileOpening'
 import { isConnectionTarget, loadConnections, saveConnections } from './connectionStore'
-import { listS3Buckets, testConnection } from './connectionTesting'
+import { testConnection } from './connectionTesting'
 import { pickDirectory } from './dialogs'
 import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
 import { listLocalEntries } from './localFileListing'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { createLocalDirectory, createRemoteDirectory, renameLocal, renameRemote } from './storageMutations'
-import type { ConnectionTarget, S3BucketListRequest } from '../shared/connections'
+import type { ConnectionTarget } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
 import type { BatchItem, OpenMode, PasteRequest, ReadEncoding, TextEncoding } from '../shared/transfer'
 
@@ -98,7 +98,6 @@ app.whenReady().then(() => {
   ipcMain.handle('connections:load', loadConnections)
   ipcMain.handle('connections:save', (_event, targets: ConnectionTarget[]) => saveConnections(targets))
   ipcMain.handle('connections:test', (_event, target: ConnectionTarget) => testConnection(target))
-  ipcMain.handle('s3:buckets', (_event, request: S3BucketListRequest) => listS3Buckets(request))
   ipcMain.handle('storage:list', async (_event, target: ConnectionTarget, path: string) => {
     if (!isConnectionTarget(target)) throw new Error('Invalid connection settings.')
     return createStorageProvider(target).list(path)

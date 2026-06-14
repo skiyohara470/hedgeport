@@ -31,8 +31,6 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
   const [password, setPassword] = useState(target?.kind === 'sftp' ? target.password : '')
   const [rootPath, setRootPath] = useState(target?.kind === 'sftp' ? target.rootPath : '/')
   const [region, setRegion] = useState(target?.kind === 's3' ? target.region : 'ap-northeast-1')
-  const [bucket, setBucket] = useState(target?.kind === 's3' ? target.bucket : '')
-  const [prefix, setPrefix] = useState(target?.kind === 's3' ? target.prefix : '')
   const [accessKeyId, setAccessKeyId] = useState(target?.kind === 's3' ? target.accessKeyId : '')
   const [secretAccessKey, setSecretAccessKey] = useState(target?.kind === 's3' ? target.secretAccessKey : '')
   const [sessionToken, setSessionToken] = useState(target?.kind === 's3' ? target.sessionToken : '')
@@ -40,9 +38,6 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
   const [formError, setFormError] = useState<string | null>(null)
   const [isTesting, setIsTesting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [isLoadingBuckets, setIsLoadingBuckets] = useState(false)
-  const [bucketOptions, setBucketOptions] = useState<string[]>([])
-  const [bucketError, setBucketError] = useState<string | null>(null)
 
   /**
    * 現在の入力値を ConnectionTarget 契約へ詰め直す。
@@ -72,8 +67,6 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       name: trimmedName,
       lastLocalPath: target?.lastLocalPath,
       region: region.trim(),
-      bucket: bucket.trim(),
-      prefix: prefix.trim(),
       accessKeyId: accessKeyId.trim(),
       secretAccessKey,
       sessionToken: sessionToken.trim(),
@@ -92,7 +85,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       }
       return null
     }
-    if (!connection.region || !connection.bucket || !connection.accessKeyId || !connection.secretAccessKey) {
+    if (!connection.region || !connection.accessKeyId || !connection.secretAccessKey) {
       return 'Complete all required S3 fields.'
     }
     return null
@@ -163,36 +156,6 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     }
   }
 
-  /**
-   * S3 認証情報から候補 bucket を取得する。
-   * region 単位で絞り込まれた一覧を出し、1件だけなら自動選択する。
-   */
-  const fetchBuckets = async (): Promise<void> => {
-    if (!region.trim() || !accessKeyId.trim() || !secretAccessKey) {
-      setBucketError('Region, Access Key ID, and Secret Access Key are required.')
-      return
-    }
-
-    try {
-      setIsLoadingBuckets(true)
-      setBucketError(null)
-      const buckets = await window.hedgeport.listS3Buckets({
-        region: region.trim(),
-        accessKeyId: accessKeyId.trim(),
-        secretAccessKey,
-        sessionToken: sessionToken.trim(),
-      })
-      setBucketOptions(buckets)
-      if (buckets.length === 0) setBucketError('No buckets were found in this region.')
-      if (buckets.length === 1 && bucket !== buckets[0]) setBucket(buckets[0])
-    } catch (error) {
-      setBucketOptions([])
-      setBucketError(error instanceof Error ? error.message : 'Could not load S3 buckets.')
-    } finally {
-      setIsLoadingBuckets(false)
-    }
-  }
-
   return (
     <form className="connection-form" onSubmit={submit}>
       <div className="form-heading">
@@ -214,23 +177,11 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
         <fieldset className="kind-selector">
           <legend>Connection type</legend>
           <label>
-            <input
-              type="radio"
-              name="kind"
-              value="sftp"
-              checked={kind === 'sftp'}
-              onChange={() => setKind('sftp')}
-            />
+            <input type="radio" name="kind" value="sftp" checked={kind === 'sftp'} onChange={() => setKind('sftp')} />
             SFTP
           </label>
           <label>
-            <input
-              type="radio"
-              name="kind"
-              value="s3"
-              checked={kind === 's3'}
-              onChange={() => setKind('s3')}
-            />
+            <input type="radio" name="kind" value="s3" checked={kind === 's3'} onChange={() => setKind('s3')} />
             S3
           </label>
         </fieldset>
@@ -269,11 +220,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
           </label>
           <label className="form-field">
             <span>Start path</span>
-            <input
-              value={rootPath}
-              required
-              onChange={(event) => setRootPath(event.target.value)}
-            />
+            <input value={rootPath} required onChange={(event) => setRootPath(event.target.value)} />
           </label>
           <label className="form-field">
             <span>Password</span>
@@ -320,52 +267,10 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
               onChange={(event) => setSessionToken(event.target.value)}
             />
           </label>
-          <div className="bucket-picker form-field-wide">
-            <button
-              className="secondary-action-button"
-              type="button"
-              disabled={isLoadingBuckets || isSaving || isTesting}
-              onClick={() => void fetchBuckets()}
-            >
-              {isLoadingBuckets ? 'Fetching buckets...' : 'Fetch buckets'}
-            </button>
-            {bucketError && <p className="bucket-error">{bucketError}</p>}
-          </div>
-          <label className="form-field form-field-wide">
-            <span>Bucket</span>
-            <input
-              value={bucket}
-              required
-              placeholder="bucket-name"
-              onChange={(event) => setBucket(event.target.value)}
-            />
-          </label>
-          {bucketOptions.length > 0 && (
-            <label className="form-field form-field-wide">
-              <span>Available buckets</span>
-              <select
-                value={bucketOptions.includes(bucket) ? bucket : ''}
-                onChange={(event) => setBucket(event.target.value)}
-              >
-                <option value="">Select a bucket</option>
-                {bucketOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label className="form-field form-field-wide">
-            <span>Prefix</span>
-            <input value={prefix} placeholder="optional/path" onChange={(event) => setPrefix(event.target.value)} />
-          </label>
         </div>
       )}
 
-      <p className="form-note">
-        Credentials are stored in a local JSON file with owner-only file permissions.
-      </p>
+      <p className="form-note">Credentials are stored in a local JSON file with owner-only file permissions.</p>
       {testResult && (
         <p className={testResult.ok ? 'connection-result success' : 'connection-result error'} role="status">
           {testResult.message}

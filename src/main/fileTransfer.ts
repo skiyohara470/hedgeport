@@ -22,9 +22,9 @@ function assertConnectionTarget(target: unknown): asserts target is ConnectionTa
 /**
  * リモート仮想パスが「正規化済みの絶対仮想ファイルパス」か検証する。
  *
- * provider 側（joinSftpPath / s3KeyForPath）は受け取ったパスを normalizeVirtualPath で
+ * provider 側（joinSftpPath / parseS3VirtualPath）は受け取ったパスを normalizeVirtualPath で
  * 正規化するため、'//', '/.', '/foo/..', 末尾スラッシュ等の曖昧入力はルートや親へ滑り込み、
- * write / delete で S3 prefix marker などルート相当を操作し得る。
+ * write / delete で bucket ルート相当を操作し得る。
  * そこで「先頭スラッシュ必須・末尾スラッシュ禁止・正規化結果が入力と一致・ルートでない」を満たす
  * canonical な入力だけを受理する。
  *

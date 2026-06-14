@@ -30,7 +30,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `connectionStore.ts`
   接続設定のロード / 保存。
 - `connectionTesting.ts`
-  SFTP / S3 の接続テスト、および S3 bucket 一覧取得。
+  SFTP / S3 の接続テスト。S3 はアカウント単位のため ListBuckets + 各 bucket の region 解決でアクセス可否を確認し、設定 region 内の accessible bucket 数を報告する（特定 bucket への HeadBucket は行わない）。
 - `localFileListing.ts`
   ローカルファイル一覧取得。
 - `fileTransfer.ts`
@@ -78,7 +78,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 ### `src/shared`
 
 - `connections.ts`
-  接続設定、接続テスト結果、S3 bucket 取得入力の契約。
+  接続設定（SFTP / アカウント単位 S3）と接続テスト結果の契約。
 - `storage.ts`
   ファイル一覧の 1 エントリを表す契約。
 - `transfer.ts`
@@ -94,8 +94,7 @@ renderer から main への通信は、必ず preload を経由します。
 | `loadConnections()`                                       | `ipcRenderer.invoke('connections:load')`                                 | `ipcMain.handle('connections:load', ...)`              | 接続設定を読む                                                             |
 | `saveConnections(targets)`                                | `ipcRenderer.invoke('connections:save', targets)`                        | `ipcMain.handle('connections:save', ...)`              | 接続設定を保存する                                                         |
 | `testConnection(target)`                                  | `ipcRenderer.invoke('connections:test', target)`                         | `ipcMain.handle('connections:test', ...)`              | 接続テスト                                                                 |
-| `listS3Buckets(request)`                                  | `ipcRenderer.invoke('s3:buckets', request)`                              | `ipcMain.handle('s3:buckets', ...)`                    | S3 bucket 一覧取得                                                         |
-| `listStorage(target, path)`                               | `ipcRenderer.invoke('storage:list', target, path)`                       | `ipcMain.handle('storage:list', ...)`                  | SFTP / S3 一覧取得                                                         |
+| `listStorage(target, path)`                               | `ipcRenderer.invoke('storage:list', target, path)`                       | `ipcMain.handle('storage:list', ...)`                  | SFTP / S3 一覧取得（S3 のルート `/` は bucket 一覧）                       |
 | `listLocal(path?)`                                        | `ipcRenderer.invoke('local:list', path)`                                 | `ipcMain.handle('local:list', ...)`                    | ローカル一覧取得                                                           |
 | `downloadFile(target, remotePath, localPath)`             | `ipcRenderer.invoke('storage:download', ...)`                            | `ipcMain.handle('storage:download', ...)`              | リモート→ローカルへ単一ファイル転送                                        |
 | `uploadFile(target, localPath, remotePath)`               | `ipcRenderer.invoke('storage:upload', ...)`                              | `ipcMain.handle('storage:upload', ...)`                | ローカル→リモートへ単一ファイル転送                                        |
@@ -143,7 +142,7 @@ SFTP と S3 は実装が異なりますが、呼び出し側は同じ操作で�
 現在の実装は次の 2 つです。
 
 - `SftpProvider`（mkdir / rename はネイティブに対応。衝突は `exists` で事前確認）
-- `S3Provider`（ディレクトリは末尾スラッシュ marker。file rename は CopyObject→DeleteObject、directory rename は prefix 配下を pagination 列挙→全 copy 成功後に 1000 件 chunk で DeleteObjects。copy 失敗時は元を残す）
+- `S3Provider`（仮想パス `/<bucket>/<key>`。`list('/')` は region 内 bucket を pagination 込みで列挙しディレクトリエントリとして返す。`list('/<bucket>...')` は当該 bucket を Delimiter='/' で 1 階層列挙。read/write/delete/createDirectory/rename/deleteDirectory/copyFile は path から bucket を導出し、ルート / bare bucket への object 操作は明示エラーで弾く（bucket への generic な Put/Delete は出さない）。bucket 作成・削除は対象外。ディレクトリは末尾スラッシュ marker。file rename/copy は CopyObject（source bucket を CopySource、dest bucket へ）で別 bucket 間も対応、file rename は copy 後に source を DeleteObject。directory rename は prefix 配下を pagination 列挙→全 copy 成功後に 1000 件 chunk で DeleteObjects。copy 失敗時は元を残す）
   - S3 directory rename の atomicity 注意: 「全 copy 完了 → 元を削除」の順で行う。copy 途中失敗時は元を残すが、削除フェーズで DeleteObjects が `Errors`（HTTP 200 でも個別失敗を返す）を含む場合は明示エラーを throw する。この時点で source / destination の双方が残り得る（完全な atomicity は保証不能）ため、エラー通知を受けて再試行 / 手動確認が必要。source が 0 件なら不在として明示エラーにする。
 
 接続設定の `kind` を見て `createStorageProvider()` が具体実装を選びます。
@@ -156,8 +155,10 @@ SFTP と S3 は実装が異なりますが、呼び出し側は同じ操作で�
 
 - `SftpConnectionTarget`
   `host`, `port`, `username`, `password`, `rootPath`
-- `S3ConnectionTarget`
-  `region`, `bucket`, `prefix`, `accessKeyId`, `secretAccessKey`, `sessionToken`
+- `S3ConnectionTarget`（アカウント/認証情報単位。bucket / prefix は持たない）
+  `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`
+  仮想パスは `/<bucket>/<key...>`。ルート `/` は region 内の bucket 一覧、`/<bucket>` は bucket ルート。
+  legacy レコード（bucket / prefix 付き）は `connectionStore.migrateConnectionTarget` が load / save の両方で正規化して除去する（IPC 等から legacy shape が渡っても保存 JSON には bucket / prefix を残さない）。
 
 どちらも共通で `id`, `name`, `lastLocalPath` を持ちます。
 
@@ -205,7 +206,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - `src/main/externalEdit.test.ts`
   temp 隔離・重複再利用・launch 失敗 surface・upload（conflict block / symlink 拒否）・discard cleanup。
 - `src/main/providers/SftpProvider.test.ts` / `S3Provider.test.ts`
-  mkdir / rename の実装（S3 は marker / file copy→delete / directory pagination+chunk delete / copy 失敗時の元保持）。
+  mkdir / rename の実装（S3 は root bucket 列挙 + region 絞り込み + pagination、bucket-root/deep 列挙、path ごとの bucket routing、root/bare-bucket mutation 拒否、cross-bucket rename/copy、marker / file copy→delete / directory pagination+chunk delete / copy 失敗時の元保持）。
 - `src/preload/index.test.ts`
   公開 API が各 IPC channel を正しい引数で呼ぶこと。
 - `src/main/connectionTesting.test.ts`
@@ -225,6 +226,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - 複数選択に対応。context menu / toolbar / ショートカットは現在の選択全体に作用する。右クリックは対象が選択内なら選択を維持、選択外ならその 1 件へ置換する。Rename / Open は単一選択時のみ有効。
 - 転送（download / upload）と copy はファイルのみ対象。ディレクトリの一括転送 / copy は対象外（rename / delete はディレクトリも対象）。delete の directory は SFTP / local が非再帰（非空はエラー）、S3 は prefix 配下を一括削除。
 - アプリ内 Copy/Paste（Mod+C / Mod+V）は remote↔local の 4 組合せに対応。同名は上書きせず `name copy.ext` で採番。クリップボードは接続設定スナップショットを含み、タブ切替後も保持する。**大容量 / 大量ファイルは現 Provider が全量を一度に read/write する制約があり、メモリ使用に注意（ストリーミング / 進捗は将来対応）。**
+- S3 接続はアカウント単位。初期ページ（仮想ルート `/`）は region 内の bucket をディレクトリとして表示し、Open / ダブルクリックで `/<bucket>` へ入る。パンくずは `/ > bucket > …`、Up で bucket ルートから bucket 一覧へ戻る。bucket 一覧ルートでは bucket への mutation / 転送 / open-with（New Folder・Paste・Upload・Rename・Delete・Copy・Download・Copy path・編集/開く）を UI 上も無効化し、ディレクトリ（bucket）の Open/移動と検索・更新・ローカル側操作だけを許す（`fileActions` の `isBucketListRoot`）。bucket 内では通常の S3 アクションが有効に戻る。
 - バッチ結果は逐次処理で成功 / 失敗件数を status bar に集計表示する（部分失敗を許容）。
 - 各ペインは「nav 行（接続名/パンくず/移動）＋検索 input + action toolbar 帯」を固定し、一覧（`.file-table-scroll`）だけがスクロールする（flex レイアウトでマジック値なし）。検索 input は可視ラベルを持たず `aria-label="Search files"`。空ディレクトリでも検索 / toolbar は表示維持。
 - リモート / ローカルテキストは文字コード選択編集に対応（utf-8 / shift_jis / euc-jp、iconv-lite で main 一元変換）。Built-in Editor / Preview の初回読みは `auto` で自動判定し、検出された concrete encoding をエディタ header の encoding select に表示する（保存は常に concrete で行い、`auto` で保存しない）。未編集時の encoding 変更は即再読込、編集済みは確認後。判定不能 / UTF-8 不正時はモーダルを閉じず別 encoding で再読込できる。

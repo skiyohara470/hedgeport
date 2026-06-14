@@ -381,6 +381,7 @@ function FileTable({
   hasClipboard = false,
   keyboardActive = false,
   s3FoldersHaveNoModifiedDate = false,
+  isBucketListRoot = false,
   onOpenDirectory,
   onFocusPane,
   onAction = () => undefined,
@@ -394,6 +395,7 @@ function FileTable({
   hasClipboard?: boolean
   keyboardActive?: boolean
   s3FoldersHaveNoModifiedDate?: boolean
+  isBucketListRoot?: boolean
   onOpenDirectory: (path: string) => void
   onFocusPane?: () => void
   onAction?: ActionHandler
@@ -423,7 +425,14 @@ function FileTable({
     () => entries.filter((entry) => selection.selectedPaths.has(entry.path)),
     [entries, selection.selectedPaths]
   )
-  const actionContext: ActionContext = { paneKind, selection: selectionEntries, busy, canDownloadToLocal, hasClipboard }
+  const actionContext: ActionContext = {
+    paneKind,
+    selection: selectionEntries,
+    busy,
+    canDownloadToLocal,
+    hasClipboard,
+    isBucketListRoot,
+  }
   const actions = describeActions(actionContext)
 
   /**
@@ -628,7 +637,13 @@ function FileTable({
       </div>
       <div className="file-table-scroll">
         {visibleEntries.length === 0 ? (
-          <p className="pane-message">{normalizedQuery ? 'No files match this search.' : 'This directory is empty.'}</p>
+          <p className="pane-message">
+            {normalizedQuery
+              ? 'No files match this search.'
+              : isBucketListRoot
+                ? 'No buckets are accessible in this region.'
+                : 'This directory is empty.'}
+          </p>
         ) : (
           <table>
             <thead>
@@ -966,6 +981,7 @@ export function RemoteFilePane({
           hasClipboard={hasClipboard}
           keyboardActive={keyboardActive}
           s3FoldersHaveNoModifiedDate={target.kind === 's3'}
+          isBucketListRoot={target.kind === 's3' && path === '/'}
           onOpenDirectory={(entryPath) => void loadDirectory(entryPath, 'push')}
           onFocusPane={onFocusPane}
           onAction={onAction}

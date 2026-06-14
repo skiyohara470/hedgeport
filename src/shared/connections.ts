@@ -21,13 +21,13 @@ export interface SftpConnectionTarget extends ConnectionTargetBase {
 }
 
 /**
- * S3 接続先の設定。
+ * S3 接続先の設定（アカウント/認証情報単位）。
+ * bucket / prefix は持たず、初期ページで region 内の bucket 一覧を表示し、
+ * 仮想パス `/<bucket>/<key>` で各 bucket を辿る。
  */
 export interface S3ConnectionTarget extends ConnectionTargetBase {
   kind: 's3'
   region: string
-  bucket: string
-  prefix: string
   accessKeyId: string
   secretAccessKey: string
   sessionToken: string
@@ -44,14 +44,4 @@ export type ConnectionTarget = SftpConnectionTarget | S3ConnectionTarget
 export interface ConnectionTestResult {
   ok: boolean
   message: string
-}
-
-/**
- * S3 bucket 一覧取得に必要な認証入力。
- */
-export interface S3BucketListRequest {
-  region: string
-  accessKeyId: string
-  secretAccessKey: string
-  sessionToken: string
 }

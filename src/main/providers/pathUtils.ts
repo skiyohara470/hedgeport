@@ -61,17 +61,24 @@ export function joinSftpPath(rootPath: string, virtualPath: string): string {
   return relative ? posix.join(root, relative) : root
 }
 
-/**
- * S3 prefix は先頭・末尾のスラッシュ有無を吸収して一貫したキー生成に使う。
- */
-export function normalizeS3Prefix(prefix: string): string {
-  return prefix.split('/').filter(Boolean).join('/')
+/** S3 仮想パスを bucket と object 相対 key に分解した結果。 */
+export interface S3PathParts {
+  /** 先頭セグメント = bucket。ルート `/` のときは null。 */
+  bucket: string | null
+  /** bucket 以降の object key（空文字は bucket ルート）。 */
+  key: string
 }
 
 /**
- * 仮想パスを S3 object key に変換する。
- * S3 に本物のディレクトリは無いので、prefix と相対キーを文字列として連結する。
+ * S3 仮想パス `/<bucket>/<key...>` を bucket と object key に分解する。
+ * ルート `/` は bucket=null（bucket 一覧）、`/<bucket>` は key=''（bucket ルート）。
+ *
+ * @param path 仮想パス
+ * @returns bucket と key
  */
-export function s3KeyForPath(prefix: string, virtualPath: string): string {
-  return [normalizeS3Prefix(prefix), normalizeVirtualPath(virtualPath).slice(1)].filter(Boolean).join('/')
+export function parseS3VirtualPath(path: string): S3PathParts {
+  const normalized = normalizeVirtualPath(path)
+  if (normalized === '/') return { bucket: null, key: '' }
+  const [bucket, ...rest] = normalized.slice(1).split('/')
+  return { bucket, key: rest.join('/') }
 }
