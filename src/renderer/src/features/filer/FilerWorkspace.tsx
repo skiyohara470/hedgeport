@@ -10,16 +10,16 @@ import {
   type TextEncoding,
 } from '../../../../shared/transfer'
 import type { StorageEntry } from '../../../../shared/storage'
-import { createDefaultSettings, type AppSettings } from '../../../../shared/settings'
+import { createDefaultSettings, type AppSettings, type Language } from '../../../../shared/settings'
 import { Icon, type IconName } from '../icons/Icon'
 import { useTranslation } from '../i18n/I18nContext'
+import { resolveMessage, type Message, type TranslationKey, type TranslationParams } from '../i18n/translations'
 import { ConnectionManager } from '../connection/ConnectionManager'
 import type { ConnectionTarget } from '../connection/connectionTypes'
 import {
   describeActions,
   isTypingTarget,
   matchesShortcut,
-  summarizeSelection,
   type ActionContext,
   type FileActionDescriptor,
   type FileActionId,
@@ -53,21 +53,13 @@ type ActionHandler = (id: FileActionId, selection: StorageEntry[]) => void
 /** 開き方選択ハンドラ。 */
 type OpenWithHandler = (mode: OpenMode, entry: StorageEntry) => void
 
-/** Open… で選べる開き方の一覧。 */
-const OPEN_MODE_ITEMS: { mode: OpenMode; label: string }[] = [
-  { mode: 'preview', label: 'Preview' },
-  { mode: 'built-in', label: 'Built-in Editor' },
-  { mode: 'system-default', label: 'System Default App' },
-  { mode: 'choose-app', label: 'Choose Application…' },
+/** Open… で選べる開き方の一覧（ラベルは翻訳キーで保持し render 時に解決）。 */
+const OPEN_MODE_ITEMS: { mode: OpenMode; labelKey: TranslationKey }[] = [
+  { mode: 'preview', labelKey: 'openMode.preview' },
+  { mode: 'built-in', labelKey: 'openMode.builtIn' },
+  { mode: 'system-default', labelKey: 'openMode.systemDefault' },
+  { mode: 'choose-app', labelKey: 'openMode.chooseApp' },
 ]
-
-/**
- * 開き方が現在の pane で使えるか。
- * remote の System Default / Choose Application は外部編集セッション（temp 経由）で対応する。
- */
-function openModeEnabled(_mode: OpenMode, _paneKind: PaneKind): boolean {
-  return true
-}
 
 interface FilerWorkspaceProps {
   target: ConnectionTarget
@@ -89,12 +81,18 @@ function formatSize(size?: number): string {
   return `${(size / 1024 ** 3).toFixed(1)} GB`
 }
 
+/** 表示言語に対応する BCP47 ロケール（日付整形に使う）。 */
+const DATE_LOCALES: Record<Language, string> = { ja: 'ja-JP', en: 'en-US' }
+
 /**
- * 一覧表示用に更新日時をローカライズして整形する。
+ * 一覧表示用に更新日時を、アプリの表示言語に合わせて整形する。
+ *
+ * @param value ISO 日時文字列
+ * @param language アプリ表示言語（OS ロケールではなく設定言語に追従）
  */
-function formatModifiedAt(value?: string): string {
+export function formatModifiedAt(value: string | undefined, language: Language): string {
   if (!value) return '-'
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(DATE_LOCALES[language], {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -260,12 +258,14 @@ interface ContextMenuState {
  */
 interface NameDialogState {
   id: number
-  title: string
-  label: string
+  // 翻訳キーで保持し render 時に解決する（言語切替で固定ラベルも即時更新）。
+  titleKey: TranslationKey
+  titleParams?: TranslationParams
+  labelKey: TranslationKey
+  submitKey: TranslationKey
   value: string
-  submitLabel: string
   busy: boolean
-  error: string | null
+  error: Message | null
   submit: (name: string) => Promise<void>
 }
 
@@ -355,7 +355,7 @@ function FileTable({
   onAction?: ActionHandler
   onOpenWith?: OpenWithHandler
 }) {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const [selection, setSelection] = useState(emptySelection)
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -549,20 +549,24 @@ function FileTable({
       <div className="table-toolbar">
         <label className="search-box">
           <input
-            aria-label="Search files"
+            aria-label={t('pane.searchFiles')}
             value={query}
-            placeholder="Search files"
+            placeholder={t('pane.searchFiles')}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        <div className="pane-action-toolbar" role="toolbar" aria-label={`${paneKind} actions`}>
+        <div
+          className="pane-action-toolbar"
+          role="toolbar"
+          aria-label={t('table.paneActions', { pane: t(paneKind === 'remote' ? 'pane.remote' : 'pane.local') })}
+        >
           {/* Open（eye 本体）＋ ▼（Open… 開き方選択）の split button。 */}
           <span className="split-button">
             <button
               className="icon-button"
               type="button"
-              aria-label="Open"
-              title="Open (Enter)"
+              aria-label={t('action.open')}
+              title={openAction?.shortcutLabel ? `${t('action.open')} (${openAction.shortcutLabel})` : t('action.open')}
               disabled={!openAction?.enabled}
               onClick={() => runAction('open')}
             >
@@ -571,10 +575,14 @@ function FileTable({
             <button
               className="split-button-caret"
               type="button"
-              aria-label="Open with…"
+              aria-label={t('action.openWithMenu')}
               aria-haspopup="menu"
               aria-expanded={openModeFor !== null}
-              title={openWithAction?.shortcutLabel ? `Open… (${openWithAction.shortcutLabel})` : 'Open…'}
+              title={
+                openWithAction?.shortcutLabel
+                  ? `${t('action.openWith')} (${openWithAction.shortcutLabel})`
+                  : t('action.openWith')
+              }
               disabled={!openWithAction?.enabled}
               onClick={() => runAction('open-with')}
             >
@@ -599,34 +607,35 @@ function FileTable({
       <div className="file-table-scroll">
         {visibleEntries.length === 0 ? (
           <p className="pane-message">
-            {normalizedQuery
-              ? 'No files match this search.'
-              : isBucketListRoot
-                ? 'No buckets are accessible in this region.'
-                : 'This directory is empty.'}
+            {normalizedQuery ? t('pane.noSearchMatch') : isBucketListRoot ? t('pane.noBuckets') : t('pane.emptyDir')}
           </p>
         ) : (
           <table>
             <thead>
               <tr>
                 <th className="checkbox-cell">
-                  <input ref={selectAllRef} type="checkbox" aria-label="Select all" onChange={toggleSelectAll} />
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    aria-label={t('table.selectAll')}
+                    onChange={toggleSelectAll}
+                  />
                 </th>
                 <th aria-sort={ariaSortValue('name', sortKey, sortDirection)}>
                   <button className="sort-button" type="button" onClick={() => toggleSort('name')}>
-                    Name
+                    {t('table.name')}
                     <span aria-hidden="true">{sortKey === 'name' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}</span>
                   </button>
                 </th>
                 <th aria-sort={ariaSortValue('size', sortKey, sortDirection)}>
                   <button className="sort-button" type="button" onClick={() => toggleSort('size')}>
-                    Size
+                    {t('table.size')}
                     <span aria-hidden="true">{sortKey === 'size' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}</span>
                   </button>
                 </th>
                 <th aria-sort={ariaSortValue('modifiedAt', sortKey, sortDirection)}>
                   <button className="sort-button" type="button" onClick={() => toggleSort('modifiedAt')}>
-                    Modified
+                    {t('table.modified')}
                     <span aria-hidden="true">
                       {sortKey === 'modifiedAt' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
                     </span>
@@ -644,7 +653,7 @@ function FileTable({
                       .filter(Boolean)
                       .join(' ')}
                     aria-selected={selected}
-                    title="Double-click to open"
+                    title={t('table.doubleClickToOpen')}
                     onClick={(event) => select(event, entry.path)}
                     onContextMenu={(event) => {
                       event.preventDefault()
@@ -664,7 +673,7 @@ function FileTable({
                     <td className="checkbox-cell">
                       <input
                         type="checkbox"
-                        aria-label={`Select ${entry.name}`}
+                        aria-label={t('table.select', { name: entry.name })}
                         checked={selected}
                         onClick={(event) => event.stopPropagation()}
                         onChange={(event) => {
@@ -689,12 +698,10 @@ function FileTable({
                     <td>{formatSize(entry.size)}</td>
                     <td
                       title={
-                        s3FoldersHaveNoModifiedDate && entry.type === 'directory'
-                          ? 'S3 folders have no modified date.'
-                          : undefined
+                        s3FoldersHaveNoModifiedDate && entry.type === 'directory' ? t('table.s3NoDate') : undefined
                       }
                     >
-                      {formatModifiedAt(entry.modifiedAt)}
+                      {formatModifiedAt(entry.modifiedAt, language)}
                     </td>
                   </tr>
                 )
@@ -707,7 +714,9 @@ function FileTable({
         <div
           className="context-menu"
           role="menu"
-          aria-label={contextMenu.entry ? `${contextMenu.entry.name} actions` : 'Directory actions'}
+          aria-label={
+            contextMenu.entry ? t('table.entryActions', { name: contextMenu.entry.name }) : t('table.directoryActions')
+          }
           style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
         >
           {menuActions.map((action) => (
@@ -732,33 +741,27 @@ function FileTable({
           className="editor-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={`Open ${openModeFor.name} with`}
+          aria-label={t('table.openModalAria', { name: openModeFor.name })}
           onClick={() => setOpenModeFor(null)}
         >
           <div className="open-mode-modal" role="menu" onClick={(event) => event.stopPropagation()}>
             <header className="editor-header">
-              <h2>Open “{openModeFor.name}”</h2>
+              <h2>{t('table.openModalTitle', { name: openModeFor.name })}</h2>
             </header>
-            {OPEN_MODE_ITEMS.map((item) => {
-              const enabled = openModeEnabled(item.mode, paneKind)
-              return (
-                <button
-                  key={item.mode}
-                  type="button"
-                  role="menuitem"
-                  disabled={!enabled}
-                  title={enabled ? undefined : 'External editing will be added next'}
-                  onClick={() => {
-                    const entry = openModeFor
-                    setOpenModeFor(null)
-                    onOpenWith(item.mode, entry)
-                  }}
-                >
-                  <span>{item.label}</span>
-                  {!enabled && <span className="menu-shortcut">soon</span>}
-                </button>
-              )
-            })}
+            {OPEN_MODE_ITEMS.map((item) => (
+              <button
+                key={item.mode}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const entry = openModeFor
+                  setOpenModeFor(null)
+                  onOpenWith(item.mode, entry)
+                }}
+              >
+                <span>{t(item.labelKey)}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -796,9 +799,10 @@ export function RemoteFilePane({
   showHiddenFiles?: boolean
   reloadToken?: number
 }) {
+  const { t } = useTranslation()
   const [path, setPath] = useState('/')
   const [entries, setEntries] = useState<StorageEntry[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<Message | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [backStack, setBackStack] = useState<string[]>([])
   const [forwardStack, setForwardStack] = useState<string[]>([])
@@ -832,7 +836,7 @@ export function RemoteFilePane({
       // 親が転送先（アップロード先）を決められるよう、現在のリモートディレクトリを伝える。
       onCurrentPathChange?.(nextPath)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not list this directory.')
+      setError(reason instanceof Error ? { raw: reason.message } : { key: 'pane.couldNotList' })
     } finally {
       setIsLoading(false)
     }
@@ -861,7 +865,7 @@ export function RemoteFilePane({
       <header className="pane-header">
         <span>{target.name}</span>
         <div className="pane-header-tools">
-          <nav className="breadcrumbs" aria-label="Current directory">
+          <nav className="breadcrumbs" aria-label={t('pane.currentDirectory')}>
             {breadcrumbs(path).map((item, index, items) => (
               <span key={item.path}>
                 <button
@@ -880,8 +884,8 @@ export function RemoteFilePane({
             className="pane-header-button"
             type="button"
             disabled={isLoading || backStack.length === 0}
-            aria-label="Back"
-            title="Back"
+            aria-label={t('pane.back')}
+            title={t('pane.back')}
             onClick={() => {
               const previous = backStack.at(-1)
               if (previous) void loadDirectory(previous, 'back')
@@ -893,8 +897,8 @@ export function RemoteFilePane({
             className="pane-header-button"
             type="button"
             disabled={isLoading || forwardStack.length === 0}
-            aria-label="Forward"
-            title="Forward"
+            aria-label={t('pane.forward')}
+            title={t('pane.forward')}
             onClick={() => {
               const next = forwardStack.at(-1)
               if (next) void loadDirectory(next, 'forward')
@@ -906,8 +910,8 @@ export function RemoteFilePane({
             className="pane-header-button"
             type="button"
             disabled={!parent || isLoading}
-            aria-label="Parent directory"
-            title="Parent directory"
+            aria-label={t('pane.parent')}
+            title={t('pane.parent')}
             onClick={() => parent && void loadDirectory(parent, 'push')}
           >
             <Icon name="up" />
@@ -916,8 +920,8 @@ export function RemoteFilePane({
             className="pane-header-button"
             type="button"
             disabled={isLoading}
-            aria-label="Reload directory"
-            title="Reload directory"
+            aria-label={t('pane.reload')}
+            title={t('pane.reload')}
             onClick={() => void loadDirectory(path)}
           >
             <Icon name="refresh" />
@@ -926,13 +930,13 @@ export function RemoteFilePane({
       </header>
       {error ? (
         <div className="pane-message error">
-          <p>{error}</p>
+          <p>{resolveMessage(t, error)}</p>
           <button className="compact-button" type="button" onClick={() => void loadDirectory(path)}>
-            Try again
+            {t('common.tryAgain')}
           </button>
         </div>
       ) : isLoading ? (
-        <p className="pane-message">Loading remote files...</p>
+        <p className="pane-message">{t('workspace.loadingRemote')}</p>
       ) : (
         // 空ディレクトリでも FileTable を描画する（空白右クリック New Folder / ショートカットを使えるように）。
         <FileTable
@@ -983,8 +987,9 @@ function LocalFilePane({
   showHiddenFiles?: boolean
   reloadToken?: number
 }) {
+  const { t } = useTranslation()
   const [directory, setDirectory] = useState<LocalDirectory | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<Message | null>(null)
   const [backStack, setBackStack] = useState<string[]>([])
   const [forwardStack, setForwardStack] = useState<string[]>([])
   const pathRef = useRef(target.lastLocalPath ?? '/')
@@ -1015,7 +1020,7 @@ function LocalFilePane({
       setDirectory(nextDirectory)
       onRememberPath(nextPath)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not read this directory.')
+      setError(reason instanceof Error ? { raw: reason.message } : { key: 'pane.couldNotRead' })
     }
   }
 
@@ -1038,9 +1043,9 @@ function LocalFilePane({
   return (
     <section className="file-pane">
       <header className="pane-header">
-        <span>Local files</span>
+        <span>{t('pane.localFiles')}</span>
         <div className="pane-header-tools">
-          <nav className="breadcrumbs" aria-label="Current directory">
+          <nav className="breadcrumbs" aria-label={t('pane.currentDirectory')}>
             {breadcrumbs(currentPath).map((item, index, items) => (
               <span key={item.path}>
                 <button
@@ -1059,8 +1064,8 @@ function LocalFilePane({
             className="pane-header-button"
             type="button"
             disabled={backStack.length === 0 || Boolean(error)}
-            aria-label="Back"
-            title="Back"
+            aria-label={t('pane.back')}
+            title={t('pane.back')}
             onClick={() => {
               const previous = backStack.at(-1)
               if (previous) void loadDirectory(previous, 'back')
@@ -1072,8 +1077,8 @@ function LocalFilePane({
             className="pane-header-button"
             type="button"
             disabled={forwardStack.length === 0 || Boolean(error)}
-            aria-label="Forward"
-            title="Forward"
+            aria-label={t('pane.forward')}
+            title={t('pane.forward')}
             onClick={() => {
               const next = forwardStack.at(-1)
               if (next) void loadDirectory(next, 'forward')
@@ -1085,8 +1090,8 @@ function LocalFilePane({
             className="pane-header-button"
             type="button"
             disabled={!parent || Boolean(error)}
-            aria-label="Parent directory"
-            title="Parent directory"
+            aria-label={t('pane.parent')}
+            title={t('pane.parent')}
             onClick={() => parent && void loadDirectory(parent, 'push')}
           >
             <Icon name="up" />
@@ -1095,8 +1100,8 @@ function LocalFilePane({
             className="pane-header-button"
             type="button"
             disabled={Boolean(error)}
-            aria-label="Reload directory"
-            title="Reload directory"
+            aria-label={t('pane.reload')}
+            title={t('pane.reload')}
             onClick={() => void loadDirectory(currentPath)}
           >
             <Icon name="refresh" />
@@ -1105,13 +1110,13 @@ function LocalFilePane({
       </header>
       {error ? (
         <div className="pane-message error">
-          <p>{error}</p>
+          <p>{resolveMessage(t, error)}</p>
           <button className="compact-button" type="button" onClick={() => void loadDirectory(currentPath)}>
-            Try again
+            {t('common.tryAgain')}
           </button>
         </div>
       ) : directory === null ? (
-        <p className="pane-message">Loading local files...</p>
+        <p className="pane-message">{t('pane.loadingLocal')}</p>
       ) : (
         // 空ディレクトリでも FileTable を描画する（空白右クリック New Folder / ショートカットを使えるように）。
         <FileTable
@@ -1195,9 +1200,10 @@ export function FilerWorkspace({
   // 転送・削除完了時に該当ペインへ再ロードを促すためのトークン。
   const [remoteReloadToken, setRemoteReloadToken] = useState(0)
   const [localReloadToken, setLocalReloadToken] = useState(0)
-  const [transfer, setTransfer] = useState<{ busy: boolean; message: string | null; error: string | null }>({
+  // status / error は構造化メッセージで保持し、言語切替時に再翻訳できるようにする。
+  const [transfer, setTransfer] = useState<{ busy: boolean; status: Message | null; error: Message | null }>({
     busy: false,
-    message: null,
+    status: null,
     error: null,
   })
   const [editor, setEditor] = useState<{
@@ -1205,7 +1211,7 @@ export function FilerWorkspace({
     entry: StorageEntry
     status: 'loading' | 'ready' | 'saving' | 'error'
     content: string
-    error: string | null
+    error: Message | null
     encoding: TextEncoding
     bom: boolean
     dirty: boolean
@@ -1226,7 +1232,7 @@ export function FilerWorkspace({
   } | null>(null)
   // リモート外部編集セッション。明示的に Upload / Discard するまで保持する（プロセス終了で消さない）。
   const [externalSessions, setExternalSessions] = useState<
-    { session: ExternalEditSession; status: 'open' | 'uploading' | 'uploaded' | 'error'; error: string | null }[]
+    { session: ExternalEditSession; status: 'open' | 'uploading' | 'uploaded' | 'error'; error: Message | null }[]
   >([])
   // ディレクトリ作成 / リネーム共通の入力モーダル。submit に実処理を持たせる。
   // id は「この dialog インスタンス」を識別し、tab 切替後に開き直した別 dialog へ旧結果を注入しないために使う。
@@ -1278,7 +1284,7 @@ export function FilerWorkspace({
    * 最後の1タブを閉じる場合だけワークスペース全体を閉じる。
    */
   const requestCloseTab = (id: string, title: string): void => {
-    if (!window.confirm(`Close "${title}"?`)) return
+    if (!window.confirm(t('confirm.closeTab', { title }))) return
 
     if (tabs.tabs.length === 1) {
       onDisconnect()
@@ -1299,7 +1305,7 @@ export function FilerWorkspace({
   useEffect(() => {
     setRemoteDir('/')
     setLocalDir(activeTarget?.lastLocalPath ?? null)
-    setTransfer({ busy: false, message: null, error: null })
+    setTransfer({ busy: false, status: null, error: null })
     setEditor(null)
     setNameDialog(null)
     setFocusedPane('remote')
@@ -1362,40 +1368,50 @@ export function FilerWorkspace({
    * BatchOperationResult を status bar に集計表示する共通ランナー。
    * 成功があれば reload を呼び、部分失敗は件数と先頭メッセージを表示する。
    *
-   * @param pending 実行中文言
-   * @param doneNoun 完了時の名詞（例: 'Downloaded'）
+   * @param pendingKey 実行中の翻訳キー（params に count を渡す）
+   * @param doneKey 完了時の翻訳キー（params.count = 成功件数）
+   * @param count 実行対象件数（pending 表示用）
    * @param action バッチ本体
    * @param onSuccessReload 1 件でも成功したら呼ぶ reload
    * @param presetScope ダイアログ待機後など、事前固定したスコープ
    */
   const runBatch = async (
-    pending: string,
-    doneNoun: string,
+    pendingKey: TranslationKey,
+    doneKey: TranslationKey,
+    count: number,
     action: () => Promise<BatchOperationResult>,
     onSuccessReload?: () => void,
     presetScope?: { tabId: string | null; targetId: string | null }
   ): Promise<void> => {
     const scope = presetScope ?? captureScope()
-    setTransfer({ busy: true, message: pending, error: null })
+    setTransfer({ busy: true, status: { key: pendingKey, params: { count } }, error: null })
     try {
       const result = await action()
       if (!isCurrentScope(scope)) return
       if (result.succeeded > 0) onSuccessReload?.()
       if (result.failures.length === 0) {
-        setTransfer({ busy: false, message: `${doneNoun} ${result.succeeded}`, error: null })
+        setTransfer({ busy: false, status: { key: doneKey, params: { count: result.succeeded } }, error: null })
       } else {
         setTransfer({
           busy: false,
-          message: null,
-          error: `${result.succeeded} succeeded, ${result.failures.length} failed (${result.failures[0].message})`,
+          status: null,
+          // 先頭の失敗メッセージは main/server 由来のため raw を埋め込む。
+          error: {
+            key: 'status.batchPartial',
+            params: {
+              succeeded: result.succeeded,
+              failed: result.failures.length,
+              message: result.failures[0].message,
+            },
+          },
         })
       }
     } catch (reason) {
       if (isCurrentScope(scope)) {
         setTransfer({
           busy: false,
-          message: null,
-          error: reason instanceof Error ? reason.message : 'Operation failed.',
+          status: null,
+          error: reason instanceof Error ? { raw: reason.message } : { key: 'error.operationFailed' },
         })
       }
     }
@@ -1407,15 +1423,16 @@ export function FilerWorkspace({
   const handleDownloadToLocal = (selection: StorageEntry[]): void => {
     if (!activeTarget || selection.length === 0) return
     if (!showLocalFiles || !localDir) {
-      setTransfer({ busy: false, message: null, error: 'Open the local files pane to choose a download destination.' })
+      setTransfer({ busy: false, status: null, error: { key: 'error.noDownloadDest' } })
       return
     }
     const target = activeTarget
     const directory = localDir
     const paths = selection.map((entry) => entry.path)
     void runBatch(
-      `Downloading ${paths.length}…`,
-      'Downloaded',
+      'status.downloading',
+      'status.downloaded',
+      paths.length,
       () => window.hedgeport.batchDownload(target, paths, directory),
       () => setLocalReloadToken((value) => value + 1)
     )
@@ -1433,8 +1450,9 @@ export function FilerWorkspace({
       const directory = await window.hedgeport.pickDirectory()
       if (!directory || !isCurrentScope(scope)) return
       await runBatch(
-        `Downloading ${paths.length}…`,
-        'Downloaded',
+        'status.downloading',
+        'status.downloaded',
+        paths.length,
         () => window.hedgeport.batchDownload(target, paths, directory),
         () => {
           if (showLocalFiles && directory === localDir) setLocalReloadToken((value) => value + 1)
@@ -1452,16 +1470,27 @@ export function FilerWorkspace({
     const target = activeTarget
     const paths = selection.map((entry) => entry.path)
     void runBatch(
-      `Uploading ${paths.length}…`,
-      'Uploaded',
+      'status.uploading',
+      'status.uploaded',
+      paths.length,
       () => window.hedgeport.batchUpload(target, paths, remoteDir),
       () => setRemoteReloadToken((value) => value + 1)
     )
   }
 
-  /** 削除確認のメッセージ（選択内容の要約付き）。 */
-  const deleteConfirmMessage = (selection: StorageEntry[]): string =>
-    t('confirm.deleteEntries', { summary: summarizeSelection(selection) })
+  /** 削除確認のメッセージ（選択内容の要約付き、件数表現は言語別キー）。 */
+  const deleteConfirmMessage = (selection: StorageEntry[]): string => {
+    if (selection.length === 1) {
+      return t('confirm.deleteEntries', { summary: `“${selection[0].name}”` })
+    }
+    const fileCount = selection.filter((entry) => entry.type === 'file').length
+    const dirCount = selection.length - fileCount
+    const parts: string[] = []
+    // 英語は単数/複数を明示キーで分岐（日本語は単複同形）。
+    if (fileCount > 0) parts.push(t(fileCount === 1 ? 'summary.fileOne' : 'summary.fileMany', { count: fileCount }))
+    if (dirCount > 0) parts.push(t(dirCount === 1 ? 'summary.folderOne' : 'summary.folderMany', { count: dirCount }))
+    return t('confirm.deleteEntries', { summary: parts.join(t('summary.join')) })
+  }
 
   /**
    * 選択リモートエントリ群を確認の上で一括削除する（file + directory）。
@@ -1473,8 +1502,9 @@ export function FilerWorkspace({
     const target = activeTarget
     const items = selection.map((entry) => ({ path: entry.path, type: entry.type }))
     void runBatch(
-      `Deleting ${items.length}…`,
-      'Deleted',
+      'status.deleting',
+      'status.deleted',
+      items.length,
       () => window.hedgeport.batchDeleteRemote(target, items),
       () => setRemoteReloadToken((value) => value + 1)
     )
@@ -1488,8 +1518,9 @@ export function FilerWorkspace({
     if (settings.confirmBeforeDelete && !window.confirm(deleteConfirmMessage(selection))) return
     const items = selection.map((entry) => ({ path: entry.path, type: entry.type }))
     void runBatch(
-      `Deleting ${items.length}…`,
-      'Deleted',
+      'status.deleting',
+      'status.deleted',
+      items.length,
       () => window.hedgeport.batchDeleteLocal(items),
       () => setLocalReloadToken((value) => value + 1)
     )
@@ -1505,7 +1536,7 @@ export function FilerWorkspace({
       source: { kind: paneKind, target: paneKind === 'remote' ? activeTarget : null },
       entries: files.map((entry) => ({ path: entry.path, name: entry.name, type: entry.type })),
     })
-    setTransfer({ busy: false, message: `Copied ${files.length}`, error: null })
+    setTransfer({ busy: false, status: { key: 'status.copied', params: { count: files.length } }, error: null })
   }
 
   /**
@@ -1516,8 +1547,9 @@ export function FilerWorkspace({
     const directory = destinationKind === 'remote' ? remoteDir : localDir
     if (destinationKind === 'remote' ? !activeTarget : !directory) return
     void runBatch(
-      `Pasting ${clipboard.entries.length}…`,
-      'Pasted',
+      'status.pasting',
+      'status.pasted',
+      clipboard.entries.length,
       () =>
         window.hedgeport.paste({
           entries: clipboard.entries,
@@ -1538,7 +1570,11 @@ export function FilerWorkspace({
   const handleCopyPath = (selection: StorageEntry[]): void => {
     if (selection.length === 0) return
     copyToClipboard(selection.map((entry) => entry.path).join('\n'))
-    setTransfer({ busy: false, message: selection.length > 1 ? 'Copied paths' : 'Copied path', error: null })
+    setTransfer({
+      busy: false,
+      status: { key: selection.length > 1 ? 'status.copiedPaths' : 'status.copiedPath' },
+      error: null,
+    })
   }
 
   /**
@@ -1560,7 +1596,11 @@ export function FilerWorkspace({
       if (open) await window.hedgeport.openLocalPath(path)
       else await window.hedgeport.revealInFolder(path)
     } catch (reason) {
-      setTransfer({ busy: false, message: null, error: reason instanceof Error ? reason.message : 'Could not open.' })
+      setTransfer({
+        busy: false,
+        status: null,
+        error: reason instanceof Error ? { raw: reason.message } : { key: 'error.couldNotOpen' },
+      })
     }
   }
 
@@ -1627,7 +1667,7 @@ export function FilerWorkspace({
                 // 手動切替の失敗時は changeEditorEncoding が設定済みの選択値を維持する。
                 ...current,
                 status: 'error',
-                error: reason instanceof Error ? reason.message : 'Could not open file.',
+                error: reason instanceof Error ? { raw: reason.message } : { key: 'editor.couldNotOpenFile' },
               }
             : current
         )
@@ -1639,7 +1679,7 @@ export function FilerWorkspace({
    */
   const changeEditorEncoding = (encoding: TextEncoding): void => {
     if (!editor || editor.encoding === encoding) return
-    if (editor.dirty && !window.confirm('Reload with another encoding? Unsaved changes will be lost.')) return
+    if (editor.dirty && !window.confirm(t('confirm.reloadEncoding'))) return
     setEditor((current) => (current ? { ...current, status: 'loading', error: null, encoding } : current))
     loadEditorContent(editor.source, editor.entry, encoding)
   }
@@ -1665,14 +1705,22 @@ export function FilerWorkspace({
         setEditor(null)
         if (source === 'remote') setRemoteReloadToken((value) => value + 1)
         else setLocalReloadToken((value) => value + 1)
-        setTransfer({ busy: false, message: `Saved ${entry.name} (${encoding})`, error: null })
+        setTransfer({
+          busy: false,
+          status: { key: 'status.saved', params: { name: entry.name, encoding } },
+          error: null,
+        })
       })
       .catch((reason: unknown) => {
         // 旧タブの保存失敗を、新タブで開き直したエディタへ反映しない。
         if (!isCurrentScope(scope)) return
         setEditor((current) =>
           current
-            ? { ...current, status: 'ready', error: reason instanceof Error ? reason.message : 'Could not save file.' }
+            ? {
+                ...current,
+                status: 'ready',
+                error: reason instanceof Error ? { raw: reason.message } : { key: 'editor.couldNotSaveFile' },
+              }
             : current
         )
       })
@@ -1698,8 +1746,8 @@ export function FilerWorkspace({
           void window.hedgeport.chooseApplication(entry.path).catch((reason: unknown) =>
             setTransfer({
               busy: false,
-              message: null,
-              error: reason instanceof Error ? reason.message : 'Could not open.',
+              status: null,
+              error: reason instanceof Error ? { raw: reason.message } : { key: 'error.couldNotOpen' },
             })
           )
         } else {
@@ -1724,12 +1772,16 @@ export function FilerWorkspace({
         if (current.some((item) => item.session.id === session.id)) return current
         return [...current, { session, status: 'open', error: null }]
       })
-      setTransfer({ busy: false, message: `Editing ${entry.name} externally`, error: null })
+      setTransfer({
+        busy: false,
+        status: { key: 'status.editingExternally', params: { name: entry.name } },
+        error: null,
+      })
     } catch (reason) {
       setTransfer({
         busy: false,
-        message: null,
-        error: reason instanceof Error ? reason.message : 'Could not open externally.',
+        status: null,
+        error: reason instanceof Error ? { raw: reason.message } : { key: 'external.couldNotOpenExternally' },
       })
     }
   }
@@ -1759,7 +1811,11 @@ export function FilerWorkspace({
         setExternalSessions((current) =>
           current.map((item) =>
             item.session.id === id
-              ? { ...item, status: 'error', error: reason instanceof Error ? reason.message : 'Upload failed.' }
+              ? {
+                  ...item,
+                  status: 'error',
+                  error: reason instanceof Error ? { raw: reason.message } : { key: 'external.uploadFailed' },
+                }
               : item
           )
         )
@@ -1779,27 +1835,30 @@ export function FilerWorkspace({
    * 外部編集の temp ファイルを Finder / Explorer で表示する。
    */
   const revealExternalSession = (id: string): void => {
-    void window.hedgeport
-      .revealExternalEdit(id)
-      .catch((reason: unknown) =>
-        setExternalSessions((current) =>
-          current.map((item) =>
-            item.session.id === id
-              ? { ...item, status: 'error', error: reason instanceof Error ? reason.message : 'Could not reveal.' }
-              : item
-          )
+    void window.hedgeport.revealExternalEdit(id).catch((reason: unknown) =>
+      setExternalSessions((current) =>
+        current.map((item) =>
+          item.session.id === id
+            ? {
+                ...item,
+                status: 'error',
+                error: reason instanceof Error ? { raw: reason.message } : { key: 'external.couldNotReveal' },
+              }
+            : item
         )
       )
+    )
   }
 
   /**
    * 名前入力モーダルを開く。id を採番し、tab 切替後に開いた別 dialog と区別できるようにする。
    */
   const openNameDialog = (config: {
-    title: string
-    label: string
+    titleKey: TranslationKey
+    titleParams?: TranslationParams
+    labelKey: TranslationKey
     value: string
-    submitLabel: string
+    submitKey: TranslationKey
     submit: (name: string) => Promise<void>
   }): void => {
     nameDialogSeq.current += 1
@@ -1823,7 +1882,11 @@ export function FilerWorkspace({
       .catch((reason: unknown) =>
         setNameDialog((current) =>
           reflectsCurrentDialog(current)
-            ? { ...current, busy: false, error: reason instanceof Error ? reason.message : 'Operation failed.' }
+            ? {
+                ...current,
+                busy: false,
+                error: reason instanceof Error ? { raw: reason.message } : { key: 'error.operationFailed' },
+              }
             : current
         )
       )
@@ -1838,15 +1901,15 @@ export function FilerWorkspace({
     const parentDir = remoteDir
     const scope = captureScope()
     openNameDialog({
-      title: 'New folder',
-      label: 'Folder name',
+      titleKey: 'dialog.newFolderTitle',
+      labelKey: 'dialog.folderName',
       value: '',
-      submitLabel: 'Create',
+      submitKey: 'dialog.create',
       submit: async (name) => {
         await window.hedgeport.createRemoteDirectory(target, parentDir, name)
         if (!isCurrentScope(scope)) return
         setRemoteReloadToken((value) => value + 1)
-        setTransfer({ busy: false, message: `Created ${name}`, error: null })
+        setTransfer({ busy: false, status: { key: 'status.created', params: { name } }, error: null })
       },
     })
   }
@@ -1856,25 +1919,21 @@ export function FilerWorkspace({
    */
   const openNewFolderLocal = (): void => {
     if (!localDir) {
-      setTransfer({
-        busy: false,
-        message: null,
-        error: 'Open the local files pane to choose where to create a folder.',
-      })
+      setTransfer({ busy: false, status: null, error: { key: 'error.noFolderDest' } })
       return
     }
     const parentDir = localDir
     const scope = captureScope()
     openNameDialog({
-      title: 'New folder',
-      label: 'Folder name',
+      titleKey: 'dialog.newFolderTitle',
+      labelKey: 'dialog.folderName',
       value: '',
-      submitLabel: 'Create',
+      submitKey: 'dialog.create',
       submit: async (name) => {
         await window.hedgeport.createLocalDirectory(parentDir, name)
         if (!isCurrentScope(scope)) return
         setLocalReloadToken((value) => value + 1)
-        setTransfer({ busy: false, message: `Created ${name}`, error: null })
+        setTransfer({ busy: false, status: { key: 'status.created', params: { name } }, error: null })
       },
     })
   }
@@ -1887,15 +1946,16 @@ export function FilerWorkspace({
     const target = activeTarget
     const scope = captureScope()
     openNameDialog({
-      title: `Rename ${entry.name}`,
-      label: 'New name',
+      titleKey: 'dialog.renameTitle',
+      titleParams: { name: entry.name },
+      labelKey: 'dialog.newName',
       value: entry.name,
-      submitLabel: 'Rename',
+      submitKey: 'dialog.rename',
       submit: async (name) => {
         await window.hedgeport.renameRemote(target, entry.path, name, entry.type)
         if (!isCurrentScope(scope)) return
         setRemoteReloadToken((value) => value + 1)
-        setTransfer({ busy: false, message: `Renamed to ${name}`, error: null })
+        setTransfer({ busy: false, status: { key: 'status.renamed', params: { name } }, error: null })
       },
     })
   }
@@ -1906,15 +1966,16 @@ export function FilerWorkspace({
   const openRenameLocal = (entry: StorageEntry): void => {
     const scope = captureScope()
     openNameDialog({
-      title: `Rename ${entry.name}`,
-      label: 'New name',
+      titleKey: 'dialog.renameTitle',
+      titleParams: { name: entry.name },
+      labelKey: 'dialog.newName',
       value: entry.name,
-      submitLabel: 'Rename',
+      submitKey: 'dialog.rename',
       submit: async (name) => {
         await window.hedgeport.renameLocal(entry.path, name, entry.type)
         if (!isCurrentScope(scope)) return
         setLocalReloadToken((value) => value + 1)
-        setTransfer({ busy: false, message: `Renamed to ${name}`, error: null })
+        setTransfer({ busy: false, status: { key: 'status.renamed', params: { name } }, error: null })
       },
     })
   }
@@ -2136,24 +2197,34 @@ export function FilerWorkspace({
   return (
     <main className="workspace">
       <header className="workspace-bar">
-        <nav className="tab-bar" aria-label="File tabs">
-          {tabs.tabs.map((tab) => (
-            <div className={tab.id === tabs.activeId ? 'tab active' : 'tab'} key={tab.id}>
-              <button type="button" onClick={() => setTabs((state) => activateTab(state, tab.id))}>
-                {tab.title}
-              </button>
-              <button
-                className="tab-close"
-                type="button"
-                aria-label={`Close ${tab.title}`}
-                title={`Close ${tab.title}`}
-                onClick={() => requestCloseTab(tab.id, tab.title)}
-              >
-                <Icon name="close" />
-              </button>
-            </div>
-          ))}
-          <button className="new-tab" type="button" aria-label="New tab" title="New tab" onClick={addTab}>
+        <nav className="tab-bar" aria-label={t('pane.fileTabs')}>
+          {tabs.tabs.map((tab) => {
+            // 未接続タブは 'New tab' プレースホルダを翻訳表示（接続名は data なので翻訳しない）。
+            const tabTitle = tabTargets[tab.id] ? tab.title : t('pane.newTab')
+            return (
+              <div className={tab.id === tabs.activeId ? 'tab active' : 'tab'} key={tab.id}>
+                <button type="button" onClick={() => setTabs((state) => activateTab(state, tab.id))}>
+                  {tabTitle}
+                </button>
+                <button
+                  className="tab-close"
+                  type="button"
+                  aria-label={t('pane.closeTab', { title: tabTitle })}
+                  title={t('pane.closeTab', { title: tabTitle })}
+                  onClick={() => requestCloseTab(tab.id, tabTitle)}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            )
+          })}
+          <button
+            className="new-tab"
+            type="button"
+            aria-label={t('pane.newTab')}
+            title={t('pane.newTab')}
+            onClick={addTab}
+          >
             <Icon name="plus" />
           </button>
         </nav>
@@ -2228,7 +2299,7 @@ export function FilerWorkspace({
               <div
                 className="pane-resizer"
                 role="separator"
-                aria-label="Resize file panes"
+                aria-label={t('pane.resizePanes')}
                 aria-orientation="vertical"
                 aria-valuemin={20}
                 aria-valuemax={80}
@@ -2262,7 +2333,11 @@ export function FilerWorkspace({
           className="editor-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={`${editor.readOnly ? 'Preview' : 'Edit'} ${editor.entry.name}`}
+          aria-label={
+            editor.readOnly
+              ? t('editor.ariaPreview', { name: editor.entry.name })
+              : t('editor.ariaEdit', { name: editor.entry.name })
+          }
         >
           <div
             className="editor-modal editor-modal-floating"
@@ -2274,16 +2349,16 @@ export function FilerWorkspace({
           >
             <header className="editor-header">
               {/* タイトル領域だけをドラッグ起点にする（header の操作系はドラッグを開始しない）。 */}
-              <h2 className="editor-drag-handle" title="Drag to move" onPointerDown={startEditorDrag}>
-                {editor.readOnly ? 'Preview: ' : ''}
+              <h2 className="editor-drag-handle" title={t('editor.dragToMove')} onPointerDown={startEditorDrag}>
+                {editor.readOnly ? t('editor.previewPrefix') : ''}
                 {editor.entry.name}
               </h2>
               <div className="editor-header-tools">
                 {/* 文字コード select は常設。変更時は未編集なら即再読込、編集済みは確認後。 */}
                 <label className="editor-encoding">
-                  <span>Encoding</span>
+                  <span>{t('editor.encoding')}</span>
                   <select
-                    aria-label="Encoding"
+                    aria-label={t('editor.encoding')}
                     value={editor.encoding}
                     disabled={editor.status === 'saving'}
                     onChange={(event) => changeEditorEncoding(event.target.value as TextEncoding)}
@@ -2315,25 +2390,25 @@ export function FilerWorkspace({
                 <button
                   className="compact-button"
                   type="button"
-                  aria-label="Close editor"
+                  aria-label={t('editor.closeAria')}
                   onClick={() => setEditor(null)}
                 >
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
             </header>
             {editor.status === 'loading' ? (
-              <p className="pane-message">Loading file…</p>
+              <p className="pane-message">{t('editor.loading')}</p>
             ) : editor.status === 'error' ? (
               // バイナリ/大容量や UTF-8 不正。文字コード select は header に常設されているので、
               // ここではエラー文言だけ出し、別 encoding 選択で再読込できる。
-              <p className="pane-message error">{editor.error}</p>
+              <p className="pane-message error">{editor.error && resolveMessage(t, editor.error)}</p>
             ) : (
               <>
-                {editor.error && <p className="editor-error">{editor.error}</p>}
+                {editor.error && <p className="editor-error">{resolveMessage(t, editor.error)}</p>}
                 <textarea
                   className="editor-textarea"
-                  aria-label="File contents"
+                  aria-label={t('editor.fileContents')}
                   value={editor.content}
                   spellCheck={false}
                   readOnly={editor.readOnly}
@@ -2362,11 +2437,11 @@ export function FilerWorkspace({
                     disabled={editor.status === 'saving'}
                     onClick={() => setEditor(null)}
                   >
-                    {editor.readOnly ? 'Close' : 'Cancel'}
+                    {editor.readOnly ? t('common.close') : t('common.cancel')}
                   </button>
                   {!editor.readOnly && (
                     <button type="button" disabled={editor.status === 'saving'} onClick={saveEditor}>
-                      {editor.status === 'saving' ? 'Saving…' : 'Save'}
+                      {editor.status === 'saving' ? t('editor.saving') : t('common.save')}
                     </button>
                   )}
                 </div>
@@ -2376,7 +2451,7 @@ export function FilerWorkspace({
             <div
               className="editor-resize-handle"
               role="separator"
-              aria-label="Resize editor"
+              aria-label={t('editor.resizeAria')}
               aria-orientation="horizontal"
               onPointerDown={startEditorResize}
             />
@@ -2385,15 +2460,20 @@ export function FilerWorkspace({
       )}
 
       {nameDialog && (
-        <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={nameDialog.title}>
+        <div
+          className="editor-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t(nameDialog.titleKey, nameDialog.titleParams)}
+        >
           <div className="name-modal">
             <header className="editor-header">
-              <h2>{nameDialog.title}</h2>
+              <h2>{t(nameDialog.titleKey, nameDialog.titleParams)}</h2>
             </header>
             <label className="name-field">
-              <span>{nameDialog.label}</span>
+              <span>{t(nameDialog.labelKey)}</span>
               <input
-                aria-label={nameDialog.label}
+                aria-label={t(nameDialog.labelKey)}
                 value={nameDialog.value}
                 autoFocus
                 disabled={nameDialog.busy}
@@ -2412,7 +2492,7 @@ export function FilerWorkspace({
                 }}
               />
             </label>
-            {nameDialog.error && <p className="editor-error">{nameDialog.error}</p>}
+            {nameDialog.error && <p className="editor-error">{resolveMessage(t, nameDialog.error)}</p>}
             <div className="editor-actions">
               <button
                 className="compact-button"
@@ -2420,10 +2500,10 @@ export function FilerWorkspace({
                 disabled={nameDialog.busy}
                 onClick={() => setNameDialog(null)}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button type="button" disabled={nameDialog.busy} onClick={submitNameDialog}>
-                {nameDialog.busy ? 'Working…' : nameDialog.submitLabel}
+                {nameDialog.busy ? t('dialog.working') : t(nameDialog.submitKey)}
               </button>
             </div>
           </div>
@@ -2431,20 +2511,21 @@ export function FilerWorkspace({
       )}
 
       {externalSessions.length > 0 && (
-        <section className="external-edit-banner" aria-label="External edit sessions">
+        <section className="external-edit-banner" aria-label={t('external.sessionsAria')}>
           {externalSessions.map(({ session, status, error }) => (
             <div key={session.id} className="external-edit-session">
               <span className="external-edit-name">
-                Editing externally: <strong>{session.name}</strong>
+                {t('external.editingExternally')} <strong>{session.name}</strong>
                 <span className={`external-edit-status ${status === 'error' ? 'is-error' : ''}`}>
-                  {error ??
-                    (status === 'uploaded'
-                      ? 'uploaded'
+                  {error
+                    ? resolveMessage(t, error)
+                    : status === 'uploaded'
+                      ? t('external.uploaded')
                       : status === 'uploading'
-                        ? 'uploading…'
+                        ? t('external.uploading')
                         : session.dirty
-                          ? 'modified'
-                          : 'clean')}
+                          ? t('external.modified')
+                          : t('external.clean')}
                 </span>
               </span>
               <div className="external-edit-actions">
@@ -2454,10 +2535,10 @@ export function FilerWorkspace({
                   disabled={status === 'uploading'}
                   onClick={() => uploadExternalSession(session.id)}
                 >
-                  Upload Changes
+                  {t('external.uploadChanges')}
                 </button>
                 <button className="compact-button" type="button" onClick={() => revealExternalSession(session.id)}>
-                  Reveal Local Copy
+                  {t('external.revealLocal')}
                 </button>
                 <button
                   className="compact-button"
@@ -2465,7 +2546,7 @@ export function FilerWorkspace({
                   disabled={status === 'uploading'}
                   onClick={() => discardExternalSession(session.id)}
                 >
-                  Discard
+                  {t('external.discard')}
                 </button>
               </div>
             </div>
@@ -2475,7 +2556,11 @@ export function FilerWorkspace({
 
       <footer className="status-bar">
         <span className={transfer.error ? 'status-error' : undefined}>
-          {transfer.error ?? transfer.message ?? 'Ready'}
+          {transfer.error
+            ? resolveMessage(t, transfer.error)
+            : transfer.status
+              ? resolveMessage(t, transfer.status)
+              : t('status.ready')}
         </span>
         <span>list / read / write / delete / mkdir / rename</span>
       </footer>

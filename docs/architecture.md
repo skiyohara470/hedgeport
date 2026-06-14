@@ -75,7 +75,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `features/settings/`
   設定モーダル（`SettingsDialog`）と `SettingsProvider`（設定を配下へ供給し、ルート要素へ `data-theme` / `data-font-size` / `data-density` / `lang` を反映。theme=system は matchMedia に追従し listener を cleanup）。`appearance.ts` の `resolveTheme` / `applyAppearance` は純関数で単体テスト可能。設定ボタン（gear）は起動画面右上と workspace ツールバー（Show/Hide local files の隣）に置き、同じダイアログを開く（New tab 接続選択には出さない）。Save/Cancel 方式で、変更は即時プレビュー（draft を Provider に流す）し Cancel で元へ戻す。
 - `features/i18n/`
-  日本語 / 英語の軽量辞書（`translations.ts`、typed `TranslationKey`、`{name}` プレースホルダ置換）と `createTranslator` 純関数、`I18nProvider` / `useTranslation`。language 変更は再起動なしで即反映し `html lang` も更新する。`fileActions` のラベルは translator 経由で生成し context menu / toolbar の齟齬を防ぐ。
+  日本語 / 英語の軽量辞書（`translations.ts`、typed `TranslationKey`、`{name}` プレースホルダ置換）と `createTranslator` 純関数、`I18nProvider` / `useTranslation`。language 変更は再起動なしで即反映し `html lang` も更新する。renderer の可視文字列（ConnectionForm / FilerWorkspace / FileTable / 入力ダイアログ / エディタ・プレビュー / 外部編集バナー / context menu / toolbar / ナビ / status bar / fallback error）はすべて translator 経由。renderer 生成の status / validation は「翻訳キー + params」（main/server 由来は `raw`）の構造化状態で保持し、言語切替で再翻訳され、開いたままのフォーム / ダイアログ / エディタも即時更新される。複数 / 件数表現は言語別の明示キー（en は単数/複数を分離）。一覧の日付は OS ロケールではなく選択言語（`ja-JP` / `en-US`）で整形する。`fileActions` のラベルも translator 経由で context menu / toolbar の齟齬を防ぐ。未翻訳の可視リテラル混入（属性 / インライン JSX テキスト / `window.confirm` 等 / 英文 string literal）は contract test（`i18n.contract.test.ts`、技術名 allowlist 付き、回帰 fixture 付き）で検知する。`ConnectionForm` は `noValidate` で標準 constraint validation を無効化し、独自 validate を表示言語で出す。
 - `features/icons/Icon.tsx`
   アプリ共通アイコン（gear=settings を含む）。循環参照回避のため独立モジュール化。
 - `features/preview/`
