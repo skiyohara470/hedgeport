@@ -1,4 +1,5 @@
 import type { ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
+import type { AppSettings } from '../../shared/settings'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type {
   BatchItem,
@@ -22,6 +23,8 @@ declare global {
     loadConnections: () => Promise<ConnectionTarget[]>
     saveConnections: (targets: ConnectionTarget[]) => Promise<void>
     testConnection: (target: ConnectionTarget) => Promise<ConnectionTestResult>
+    loadSettings: () => Promise<AppSettings>
+    saveSettings: (settings: AppSettings) => Promise<AppSettings>
     listStorage: (target: ConnectionTarget, path: string) => Promise<StorageEntry[]>
     downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string) => Promise<void>
     uploadFile: (target: ConnectionTarget, localPath: string, remotePath: string) => Promise<void>

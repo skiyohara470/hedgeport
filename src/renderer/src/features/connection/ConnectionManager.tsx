@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import { createDefaultSettings, type AppSettings } from '../../../../shared/settings'
+import { useTranslation } from '../i18n/I18nContext'
 import { ConnectionForm } from './ConnectionForm'
 import { reorderConnections, type DropPosition } from './connectionReorder'
 import { ConnectionSelect } from './ConnectionSelect'
@@ -7,6 +9,8 @@ import type { ConnectionTarget } from './connectionTypes'
 
 interface ConnectionManagerProps {
   targets: ConnectionTarget[]
+  /** 削除確認の有無に使う設定。未指定時は既定（確認あり）。 */
+  settings?: AppSettings
   onSelect: (target: ConnectionTarget) => void
   onSave: (target: ConnectionTarget) => Promise<void> | void
   onDelete: (target: ConnectionTarget) => Promise<void> | void
@@ -24,6 +28,7 @@ interface ConnectionManagerProps {
  */
 export function ConnectionManager({
   targets,
+  settings = createDefaultSettings('en'),
   onSelect,
   onSave,
   onDelete,
@@ -31,6 +36,7 @@ export function ConnectionManager({
   onReorder,
   reorderBusy = false,
 }: ConnectionManagerProps) {
+  const { t } = useTranslation()
   // undefined: フォームを閉じる, null: 新規作成, ConnectionTarget: 既存編集
   const [formTarget, setFormTarget] = useState<ConnectionTarget | null | undefined>(undefined)
   const isFormOpen = formTarget !== undefined
@@ -45,7 +51,13 @@ export function ConnectionManager({
         onDelete={
           formTarget
             ? async () => {
-                if (!window.confirm(`Delete "${formTarget.name}"? This cannot be undone.`)) return
+                // confirmBeforeDelete=false なら確認を省略する。
+                if (
+                  settings.confirmBeforeDelete &&
+                  !window.confirm(t('connection.deleteConfirm', { name: formTarget.name }))
+                ) {
+                  return
+                }
                 await onDelete(formTarget)
                 setFormTarget(undefined)
               }
@@ -71,9 +83,11 @@ export function ConnectionManager({
   return (
     <>
       {variant === 'welcome' && <div className="brand-mark">HP</div>}
-      <p className="eyebrow">{variant === 'welcome' ? 'HedgePort' : 'New tab'}</p>
-      <h1>Choose a connection</h1>
-      <p className="muted">Select the storage workspace to open.</p>
+      <p className="eyebrow">
+        {variant === 'welcome' ? t('connection.welcomeEyebrow') : t('connection.newTabEyebrow')}
+      </p>
+      <h1>{t('connection.choose')}</h1>
+      <p className="muted">{t('connection.chooseHint')}</p>
       <ConnectionSelect
         targets={targets}
         onSelect={onSelect}
@@ -81,11 +95,11 @@ export function ConnectionManager({
         onReorderDrop={canReorder ? handleReorderDrop : undefined}
         reorderBusy={reorderBusy}
       />
-      {targets.length === 0 && <p className="empty-state">No connections yet.</p>}
+      {targets.length === 0 && <p className="empty-state">{t('connection.empty')}</p>}
       <button className="secondary-button" type="button" onClick={() => setFormTarget(null)}>
-        Add connection
+        {t('connection.add')}
       </button>
-      <p className="scope-note">Connections are stored locally in HedgePort's application data directory.</p>
+      <p className="scope-note">{t('connection.storedLocally')}</p>
     </>
   )
 }

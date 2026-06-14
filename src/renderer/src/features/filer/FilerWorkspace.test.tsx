@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createDefaultSettings } from '../../../../shared/settings'
 import type { ConnectionTarget } from '../connection/connectionTypes'
 import {
   calculateSplitRatio,
@@ -394,13 +395,32 @@ describe('RemoteFilePane', () => {
     fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'zzz' } })
     expect(await screen.findByText('No files match this search.')).toBeTruthy()
   })
+
+  it('showHiddenFiles=false は "." 始まりのエントリを除外し、true で表示する', async () => {
+    const entries = [
+      { name: '.env', path: '/.env', type: 'file' as const },
+      { name: 'visible.txt', path: '/visible.txt', type: 'file' as const },
+    ]
+    const listStorage = vi.fn().mockResolvedValue(entries)
+    Object.defineProperty(window, 'hedgeport', { configurable: true, value: { listStorage } })
+
+    const { rerender } = render(<RemoteFilePane target={target} showHiddenFiles={false} />)
+    expect(await screen.findByText('visible.txt')).toBeTruthy()
+    expect(screen.queryByText('.env')).toBeNull()
+
+    rerender(<RemoteFilePane target={target} showHiddenFiles />)
+    expect(await screen.findByText('.env')).toBeTruthy()
+  })
 })
 
 describe('FilerWorkspace ファイル操作', () => {
   /**
    * リモート / ローカル両ペインを表示した状態でワークスペースを描画する共通セットアップ。
    */
-  const renderWorkspace = async (overrides: Partial<Record<string, ReturnType<typeof vi.fn>>> = {}): Promise<void> => {
+  const renderWorkspace = async (
+    overrides: Partial<Record<string, ReturnType<typeof vi.fn>>> = {},
+    settings?: Partial<import('../../../../shared/settings').AppSettings>
+  ): Promise<void> => {
     const listStorage =
       overrides.listStorage ?? vi.fn().mockResolvedValue([{ name: 'a.txt', path: '/a.txt', type: 'file', size: 3 }])
     const listLocal =
@@ -448,6 +468,7 @@ describe('FilerWorkspace ファイル操作', () => {
       <FilerWorkspace
         target={{ ...target, lastLocalPath: '/work' }}
         targets={[target]}
+        settings={{ ...createDefaultSettings('en'), ...settings }}
         onSaveTarget={vi.fn()}
         onDeleteTarget={vi.fn()}
         onDisconnect={vi.fn()}
@@ -570,6 +591,24 @@ describe('FilerWorkspace ファイル操作', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /Delete/ }))
 
     expect(batchDeleteRemote).not.toHaveBeenCalled()
+  })
+
+  it('confirmBeforeDelete=false なら確認なしで削除する', async () => {
+    const batchDeleteRemote = vi.fn().mockResolvedValue({ succeeded: 1, failures: [] })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await renderWorkspace({ batchDeleteRemote }, { confirmBeforeDelete: false })
+
+    const remoteRow = screen.getByText('a.txt').closest('tr')!
+    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete/ }))
+
+    // confirm を出さずに削除する。
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(batchDeleteRemote).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), [
+        { path: '/a.txt', type: 'file' },
+      ])
+    )
   })
 
   it('空白右クリックの New Folder でリモートにディレクトリを作る', async () => {

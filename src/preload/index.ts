@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type { ConnectionTarget } from '../shared/connections'
+import type { AppSettings } from '../shared/settings'
 import type { StorageEntryType } from '../shared/storage'
 import type {
   BatchItem,
@@ -25,6 +26,8 @@ const api = {
   loadConnections: (): Promise<ConnectionTarget[]> => ipcRenderer.invoke('connections:load'),
   saveConnections: (targets: ConnectionTarget[]): Promise<void> => ipcRenderer.invoke('connections:save', targets),
   testConnection: (target: ConnectionTarget) => ipcRenderer.invoke('connections:test', target),
+  loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
+  saveSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:save', settings),
   listStorage: (target: ConnectionTarget, path: string) => ipcRenderer.invoke('storage:list', target, path),
   downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string): Promise<void> =>
     ipcRenderer.invoke('storage:download', target, remotePath, localPath),

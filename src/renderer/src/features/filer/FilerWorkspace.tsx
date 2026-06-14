@@ -10,6 +10,9 @@ import {
   type TextEncoding,
 } from '../../../../shared/transfer'
 import type { StorageEntry } from '../../../../shared/storage'
+import { createDefaultSettings, type AppSettings } from '../../../../shared/settings'
+import { Icon, type IconName } from '../icons/Icon'
+import { useTranslation } from '../i18n/I18nContext'
 import { ConnectionManager } from '../connection/ConnectionManager'
 import type { ConnectionTarget } from '../connection/connectionTypes'
 import {
@@ -29,7 +32,7 @@ const TOOLBAR_ACTIONS: Record<PaneKind, FileActionId[]> = {
 }
 
 /** アクション id → toolbar アイコン名。 */
-const ACTION_ICON: Partial<Record<FileActionId, IconProps['name']>> = {
+const ACTION_ICON: Partial<Record<FileActionId, IconName>> = {
   'download-local': 'download',
   upload: 'upload',
   copy: 'copy',
@@ -69,64 +72,13 @@ function openModeEnabled(_mode: OpenMode, _paneKind: PaneKind): boolean {
 interface FilerWorkspaceProps {
   target: ConnectionTarget
   targets: ConnectionTarget[]
+  /** 隠しファイル表示 / 削除確認に使う設定。未指定時は既定。 */
+  settings?: AppSettings
+  /** 設定モーダルを開く。 */
+  onOpenSettings?: () => void
   onSaveTarget: (target: ConnectionTarget) => Promise<void> | void
   onDeleteTarget: (target: ConnectionTarget) => Promise<void> | void
   onDisconnect: () => void
-}
-
-interface IconProps {
-  name:
-    | 'columns'
-    | 'eye'
-    | 'connections'
-    | 'plus'
-    | 'close'
-    | 'up'
-    | 'refresh'
-    | 'back'
-    | 'forward'
-    | 'folder'
-    | 'file'
-    | 'download'
-    | 'upload'
-    | 'copy'
-    | 'paste'
-    | 'trash'
-    | 'folder-plus'
-    | 'rename'
-}
-
-/**
- * ワークスペース内で使う共通アイコン。
- * 見た目は name ごとの path 定義だけに寄せて呼び出し側を簡潔にする。
- */
-function Icon({ name }: IconProps) {
-  const paths = {
-    columns: <path d="M4 5h16v14H4zM12 5v14" />,
-    eye: <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Zm9.5 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />,
-    connections: <path d="M9 7 4 12l5 5M4 12h12M15 4h5v16h-5" />,
-    plus: <path d="M12 5v14M5 12h14" />,
-    close: <path d="m7 7 10 10M17 7 7 17" />,
-    up: <path d="m6 14 6-6 6 6" />,
-    refresh: <path d="M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 0 0 6.2 6.2L4 9m16 6-2.2 2.8A7 7 0 0 1 5.5 15" />,
-    back: <path d="m14 6-6 6 6 6M8 12h12" />,
-    forward: <path d="m10 6 6 6-6 6M4 12h12" />,
-    folder: <path d="M3 6.5h7l2 2h9v9.5H3z" />,
-    file: <path d="M6 3h8l4 4v14H6zM14 3v5h5" />,
-    download: <path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14" />,
-    upload: <path d="M12 20V10m0 0 4 4m-4-4-4 4M5 5h14" />,
-    copy: <path d="M9 9h10v11H9zM5 15V4h10" />,
-    paste: <path d="M9 4h6v3H9zM7 5H5v15h14V5h-2M9 12h6M9 16h6" />,
-    trash: <path d="M5 7h14M10 7V4h4v3M6 7l1 13h10l1-13" />,
-    'folder-plus': <path d="M3 6.5h7l2 2h9v9.5H3zM12 12v5M9.5 14.5h5" />,
-    rename: <path d="m4 20 1-4L16 5l3 3L8 19zM14 7l3 3" />,
-  }
-
-  return (
-    <svg className="button-icon" viewBox="0 0 24 24" aria-hidden="true">
-      {paths[name]}
-    </svg>
-  )
 }
 
 function formatSize(size?: number): string {
@@ -382,6 +334,7 @@ function FileTable({
   keyboardActive = false,
   s3FoldersHaveNoModifiedDate = false,
   isBucketListRoot = false,
+  showHiddenFiles = false,
   onOpenDirectory,
   onFocusPane,
   onAction = () => undefined,
@@ -396,11 +349,13 @@ function FileTable({
   keyboardActive?: boolean
   s3FoldersHaveNoModifiedDate?: boolean
   isBucketListRoot?: boolean
+  showHiddenFiles?: boolean
   onOpenDirectory: (path: string) => void
   onFocusPane?: () => void
   onAction?: ActionHandler
   onOpenWith?: OpenWithHandler
 }) {
+  const { t } = useTranslation()
   const [selection, setSelection] = useState(emptySelection)
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -411,8 +366,13 @@ function FileTable({
   const selectAllRef = useRef<HTMLInputElement>(null)
   const normalizedQuery = query.trim().toLowerCase()
   const filteredEntries = useMemo(
-    () => entries.filter((entry) => entry.name.toLowerCase().includes(normalizedQuery)),
-    [entries, normalizedQuery]
+    () =>
+      entries.filter((entry) => {
+        // showHiddenFiles=false なら '.' 始まりの隠しエントリを除外する（local/SFTP/S3 共通）。
+        if (!showHiddenFiles && entry.name.startsWith('.')) return false
+        return entry.name.toLowerCase().includes(normalizedQuery)
+      }),
+    [entries, normalizedQuery, showHiddenFiles]
   )
   const visibleEntries = useMemo(
     () => sortEntries(filteredEntries, sortKey, sortDirection),
@@ -420,10 +380,10 @@ function FileTable({
   )
   const orderedPaths = visibleEntries.map((entry) => entry.path)
 
-  // 現在の選択（エントリ実体）。toolbar / menu / shortcut の作用対象。
+  // 現在の選択（エントリ実体）。表示中（filtered）エントリ基準にし、隠れた / 検索除外の選択は対象にしない。
   const selectionEntries = useMemo(
-    () => entries.filter((entry) => selection.selectedPaths.has(entry.path)),
-    [entries, selection.selectedPaths]
+    () => visibleEntries.filter((entry) => selection.selectedPaths.has(entry.path)),
+    [visibleEntries, selection.selectedPaths]
   )
   const actionContext: ActionContext = {
     paneKind,
@@ -432,6 +392,7 @@ function FileTable({
     canDownloadToLocal,
     hasClipboard,
     isBucketListRoot,
+    t,
   }
   const actions = describeActions(actionContext)
 
@@ -820,6 +781,7 @@ export function RemoteFilePane({
   hasClipboard = false,
   busy = false,
   keyboardActive = false,
+  showHiddenFiles = false,
   reloadToken = 0,
 }: {
   target: ConnectionTarget
@@ -831,6 +793,7 @@ export function RemoteFilePane({
   hasClipboard?: boolean
   busy?: boolean
   keyboardActive?: boolean
+  showHiddenFiles?: boolean
   reloadToken?: number
 }) {
   const [path, setPath] = useState('/')
@@ -982,6 +945,7 @@ export function RemoteFilePane({
           keyboardActive={keyboardActive}
           s3FoldersHaveNoModifiedDate={target.kind === 's3'}
           isBucketListRoot={target.kind === 's3' && path === '/'}
+          showHiddenFiles={showHiddenFiles}
           onOpenDirectory={(entryPath) => void loadDirectory(entryPath, 'push')}
           onFocusPane={onFocusPane}
           onAction={onAction}
@@ -1005,6 +969,7 @@ function LocalFilePane({
   hasClipboard = false,
   busy = false,
   keyboardActive = false,
+  showHiddenFiles = false,
   reloadToken = 0,
 }: {
   target: ConnectionTarget
@@ -1015,6 +980,7 @@ function LocalFilePane({
   hasClipboard?: boolean
   busy?: boolean
   keyboardActive?: boolean
+  showHiddenFiles?: boolean
   reloadToken?: number
 }) {
   const [directory, setDirectory] = useState<LocalDirectory | null>(null)
@@ -1155,6 +1121,7 @@ function LocalFilePane({
           busy={busy}
           hasClipboard={hasClipboard}
           keyboardActive={keyboardActive}
+          showHiddenFiles={showHiddenFiles}
           onOpenDirectory={(entryPath) => void loadDirectory(entryPath, 'push')}
           onFocusPane={onFocusPane}
           onAction={onAction}
@@ -1170,11 +1137,13 @@ function LocalFilePane({
  */
 function TabConnectionSelect({
   targets,
+  settings,
   onSelect,
   onSave,
   onDelete,
 }: {
   targets: ConnectionTarget[]
+  settings: AppSettings
   onSelect: (target: ConnectionTarget) => void
   onSave: (target: ConnectionTarget) => Promise<void> | void
   onDelete: (target: ConnectionTarget) => Promise<void> | void
@@ -1182,7 +1151,14 @@ function TabConnectionSelect({
   return (
     <section className="tab-connection-select">
       <div className="tab-connection-card">
-        <ConnectionManager targets={targets} onSelect={onSelect} onSave={onSave} onDelete={onDelete} variant="tab" />
+        <ConnectionManager
+          targets={targets}
+          settings={settings}
+          onSelect={onSelect}
+          onSave={onSave}
+          onDelete={onDelete}
+          variant="tab"
+        />
       </div>
     </section>
   )
@@ -1192,7 +1168,16 @@ function TabConnectionSelect({
  * 接続先ごとのタブ、リモートペイン、任意のローカルペインをまとめる作業画面。
  * タブごとに接続先を保持し、接続編集結果を各タブへ反映する。
  */
-export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, onDisconnect }: FilerWorkspaceProps) {
+export function FilerWorkspace({
+  target,
+  targets,
+  settings = createDefaultSettings('en'),
+  onOpenSettings = () => undefined,
+  onSaveTarget,
+  onDeleteTarget,
+  onDisconnect,
+}: FilerWorkspaceProps) {
+  const { t } = useTranslation()
   const [tabs, setTabs] = useState<TabsState>({
     tabs: [{ id: 'root', title: target.name }],
     activeId: 'root',
@@ -1474,12 +1459,17 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
     )
   }
 
+  /** 削除確認のメッセージ（選択内容の要約付き）。 */
+  const deleteConfirmMessage = (selection: StorageEntry[]): string =>
+    t('confirm.deleteEntries', { summary: summarizeSelection(selection) })
+
   /**
    * 選択リモートエントリ群を確認の上で一括削除する（file + directory）。
    */
   const handleDeleteRemote = (selection: StorageEntry[]): void => {
     if (!activeTarget || selection.length === 0) return
-    if (!window.confirm(`Delete ${summarizeSelection(selection)}? This cannot be undone.`)) return
+    // confirmBeforeDelete=false なら確認を省略する。
+    if (settings.confirmBeforeDelete && !window.confirm(deleteConfirmMessage(selection))) return
     const target = activeTarget
     const items = selection.map((entry) => ({ path: entry.path, type: entry.type }))
     void runBatch(
@@ -1495,7 +1485,7 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
    */
   const handleDeleteLocal = (selection: StorageEntry[]): void => {
     if (selection.length === 0) return
-    if (!window.confirm(`Delete ${summarizeSelection(selection)}? This cannot be undone.`)) return
+    if (settings.confirmBeforeDelete && !window.confirm(deleteConfirmMessage(selection))) return
     const items = selection.map((entry) => ({ path: entry.path, type: entry.type }))
     void runBatch(
       `Deleting ${items.length}…`,
@@ -2172,19 +2162,28 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
           <button
             className={showLocalFiles ? 'icon-button active' : 'icon-button'}
             type="button"
-            aria-label={showLocalFiles ? 'Hide local files' : 'Show local files'}
-            title={showLocalFiles ? 'Hide local files' : 'Show local files'}
+            aria-label={showLocalFiles ? t('workspace.hideLocal') : t('workspace.showLocal')}
+            title={showLocalFiles ? t('workspace.hideLocal') : t('workspace.showLocal')}
             aria-pressed={showLocalFiles}
             onClick={() => setShowLocalFiles((value) => !value)}
           >
             <Icon name="columns" />
           </button>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label={t('settings.open')}
+            title={t('settings.open')}
+            onClick={onOpenSettings}
+          >
+            <Icon name="settings" />
+          </button>
           <span className="toolbar-divider" aria-hidden="true" />
           <button
             className="icon-button"
             type="button"
-            aria-label="Back to connections"
-            title="Back to connections"
+            aria-label={t('workspace.disconnect')}
+            title={t('workspace.disconnect')}
             onClick={onDisconnect}
           >
             <Icon name="connections" />
@@ -2195,6 +2194,7 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
       {!activeTarget ? (
         <TabConnectionSelect
           targets={targets}
+          settings={settings}
           onSelect={selectConnection}
           onSave={saveTarget}
           onDelete={deleteTarget}
@@ -2220,6 +2220,7 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
             hasClipboard={Boolean(clipboard && clipboard.entries.length > 0)}
             busy={transfer.busy}
             keyboardActive={focusedPane === 'remote' && !editor && !nameDialog}
+            showHiddenFiles={settings.showHiddenFiles}
             reloadToken={remoteReloadToken}
           />
           {showLocalFiles && (
@@ -2247,6 +2248,7 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
                   hasClipboard={Boolean(clipboard && clipboard.entries.length > 0)}
                   busy={transfer.busy}
                   keyboardActive={focusedPane === 'local' && !editor && !nameDialog}
+                  showHiddenFiles={settings.showHiddenFiles}
                   reloadToken={localReloadToken}
                 />
               )}
