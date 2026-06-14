@@ -141,9 +141,47 @@ button:disabled {
 }
 
 .connection-item {
-  display: grid;
-  grid-template-columns: 1fr auto;
+  display: flex;
+  align-items: stretch;
   gap: 8px;
+}
+
+.connection-item .connection-button {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ドラッグ並び替え用ハンドル（welcome 画面のみ）。控えめな grip dots。 */
+.connection-drag-handle {
+  display: grid;
+  width: 26px;
+  place-items: center;
+  color: #6b787b;
+  cursor: grab;
+  touch-action: none;
+}
+
+.connection-drag-handle:active {
+  cursor: grabbing;
+}
+
+.connection-drag-handle svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.connection-drag-handle:hover {
+  color: #c3e1d9;
+}
+
+/* ドロップ位置の控えめな挿入インジケータ。 */
+.connection-item.drop-before {
+  box-shadow: inset 0 2px 0 0 #4f9c8c;
+}
+
+.connection-item.drop-after {
+  box-shadow: inset 0 -2px 0 0 #4f9c8c;
 }
 
 .connection-button {

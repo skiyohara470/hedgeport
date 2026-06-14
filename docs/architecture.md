@@ -28,7 +28,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `index.ts`
   Electron 起動、ウィンドウ生成、IPC 登録の入口。
 - `connectionStore.ts`
-  接続設定のロード / 保存。
+  接続設定のロード / 保存。`migrateConnectionTarget` で legacy S3（bucket / prefix 付き）を load / save 両方で正規化する。
 - `connectionTesting.ts`
   SFTP / S3 の接続テスト。S3 はアカウント単位のため ListBuckets + 各 bucket の region 解決でアクセス可否を確認し、設定 region 内の accessible bucket 数を報告する（特定 bucket への HeadBucket は行わない）。
 - `localFileListing.ts`
@@ -65,7 +65,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `App.tsx`
   renderer の最上位。接続一覧ロード、画面分岐、ワークスペース表示を管理する。
 - `features/connection/`
-  接続先の作成、編集、選択 UI。
+  接続先の作成、編集、選択 UI。起動時の選択画面（welcome variant）では各行を**ドラッグ＆ドロップ**で並び替えできる（native HTML5 DnD、新規依存なし）。各行左端に控えめな drag handle（grip dots、`aria-label="Drag <name> to reorder"`）を置き、handle だけを draggable にして接続選択 / 編集クリックを邪魔しない。ドラッグ中は控えめな挿入インジケータ（行の上/下境界）を表示し、drop 位置（before/after）はポインタ Y で判定する。DnD payload は ID のみ。タブ内の New tab 接続選択（tab variant）では並び替え不可。並び替え結果は即 `saveConnections` で永続化し、保存中は新しいドラッグを抑止（drag handle を draggable=false）。保存成功時のみ state を更新し、失敗時は順序を変えず既存の storageError 表示経路で通知。並び替えの純ロジック（source/target/before-after → 新配列、同位置 no-op・不明 ID は null）は `connectionReorder.ts` に分離（単体テスト済み）。可視↑↓ボタンとキーボード単独並び替えは今回スコープ外（接続選択 / 編集のキーボード操作は維持）。
 - `features/filer/`
   ファイラー本体。タブ、選択、ソート、ローカル/リモートペインなどを持つ。
 - `features/filer/fileActions.ts`
@@ -240,6 +240,12 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - ディレクトリ作成 / 改名は共通の入力モーダル（Enter 実行 / Escape 取消、rename は現名称を初期値）で行い、成功後は該当ペインのみ再ロードする。空白右クリックとエントリ右クリックの両方に New Folder… を出す。
 - キーボードショートカットはフォーカス中ペインの単一選択エントリにのみ作用し、入力中（input/textarea）は発火しない。OS に応じてメニューの修飾キー表記を ⌘ / Ctrl で出し分ける。
 - 左右ペインは独立。RemoteFilePane の初期化は `target.id` のみに依存し、ローカル移動に伴う接続設定保存（参照更新）でリモートをルートへ戻さない。
+
+## Future work（未実装。設計メモのみ）
+
+- **設定画面からの接続情報インポート / エクスポート**: 専用の設定画面を新設してそこから提供する（今回は実装しない）。共有用 DTO は端末固有 / アプリ内部値（`lastLocalPath`・`id`）を除外し、インポート時は受信側で新しい `id` を採番する。
+  - インポート時の重複除外: SFTP は `normalize(host を小文字化 / trim) + port + username(trim)` が一致すれば「同じサーバー・ユーザー」とみなして除外する（`rootPath` / `password` / `name` は重複判定に含めない）。
+  - S3 は「同じサーバー・ユーザー」概念が無いため別ルールが必要。候補は `accessKeyId + region`（`secretAccessKey` / `sessionToken` / `name` は含めない）だが、実装時に仕様確定する。
 
 ## 今後ドキュメントを足すなら
 

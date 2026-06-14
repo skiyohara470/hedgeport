@@ -14,6 +14,8 @@ export function App() {
   const [selectedTarget, setSelectedTarget] = useState<ConnectionTarget | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [storageError, setStorageError] = useState<string | null>(null)
+  // 並び替え保存中は新しいドラッグを抑止する（save 競合防止）。
+  const [reorderBusy, setReorderBusy] = useState(false)
 
   useEffect(() => {
     void window.hedgeport
@@ -49,6 +51,24 @@ export function App() {
     setSelectedTarget((current) => (current?.id === target.id ? null : current))
   }
 
+  /**
+   * 接続のドラッグ並び替え結果を保存して反映する。
+   * 保存中は新しいドラッグを抑止し、保存成功時のみ state を更新する。
+   * 失敗時は順序（state）を変えず、既存の storageError 表示経路でエラーを通知する。
+   */
+  const reorderTargets = async (next: ConnectionTarget[]): Promise<void> => {
+    try {
+      setReorderBusy(true)
+      await window.hedgeport.saveConnections(next)
+      setTargets(next)
+      setStorageError(null)
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : 'Could not reorder connections.')
+    } finally {
+      setReorderBusy(false)
+    }
+  }
+
   if (window.location.hash === '#preview') {
     return <PreviewWindow />
   }
@@ -82,6 +102,8 @@ export function App() {
           onSelect={setSelectedTarget}
           onSave={saveTarget}
           onDelete={deleteTarget}
+          onReorder={reorderTargets}
+          reorderBusy={reorderBusy}
         />
       </section>
     </main>
