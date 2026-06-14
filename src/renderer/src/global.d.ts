@@ -1,4 +1,4 @@
-import type { ConnectionTarget, ConnectionTestResult, S3BucketListRequest } from '../../shared/connections'
+import type { ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type {
   BatchItem,
@@ -22,7 +22,6 @@ declare global {
     loadConnections: () => Promise<ConnectionTarget[]>
     saveConnections: (targets: ConnectionTarget[]) => Promise<void>
     testConnection: (target: ConnectionTarget) => Promise<ConnectionTestResult>
-    listS3Buckets: (request: S3BucketListRequest) => Promise<string[]>
     listStorage: (target: ConnectionTarget, path: string) => Promise<StorageEntry[]>
     downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string) => Promise<void>
     uploadFile: (target: ConnectionTarget, localPath: string, remotePath: string) => Promise<void>

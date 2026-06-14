@@ -29,8 +29,6 @@ const targets: ConnectionTarget[] = [
     name: 'バックアップS3',
     kind: 's3',
     region: 'ap-northeast-1',
-    bucket: 'backup',
-    prefix: '',
     accessKeyId: 'access-key',
     secretAccessKey: 'secret-key',
     sessionToken: '',

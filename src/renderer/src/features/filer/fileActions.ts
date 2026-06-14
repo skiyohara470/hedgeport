@@ -55,7 +55,30 @@ export interface ActionContext {
   canDownloadToLocal: boolean
   /** 内部クリップボードに貼り付け可能な項目があるか。 */
   hasClipboard: boolean
+  /**
+   * remote のみ: S3 のルート（bucket 一覧）を表示しているか。
+   * bucket は外部リソースで疑似フォルダではないため、ここでは mutation / 転送 / open-with を不可にし、
+   * ディレクトリ（bucket）の Open/移動と検索・更新だけを許す。
+   */
+  isBucketListRoot?: boolean
 }
+
+/**
+ * S3 bucket 一覧ルートで無効化するアクション。
+ * bucket への generic な mutation / 転送 / ファイルを開く操作はすべて不可にする。
+ */
+const BUCKET_ROOT_DISABLED: ReadonlySet<FileActionId> = new Set<FileActionId>([
+  'open-with',
+  'download-local',
+  'download-dialog',
+  'upload',
+  'copy',
+  'paste',
+  'rename',
+  'copy-path',
+  'delete',
+  'new-folder',
+])
 
 /** 実行環境が mac かどうか（メニューの修飾キー表記に使う）。 */
 export const isMacPlatform =
@@ -214,6 +237,8 @@ function actionLabel(id: FileActionId, count: number): string {
 function isEnabled(id: FileActionId, context: ActionContext): boolean {
   const count = context.selection.length
   const files = allFiles(context.selection)
+  // S3 bucket 一覧ルートでは bucket への mutation / 転送 / open-with を不可にする（Open=移動のみ許可）。
+  if (context.isBucketListRoot && BUCKET_ROOT_DISABLED.has(id)) return false
   switch (id) {
     case 'open':
       return count === 1

@@ -1,12 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const {
-  sendMock,
-  destroyMock,
-  connectMock,
-  listMock,
-  endMock,
-} = vi.hoisted(() => ({
+const { sendMock, destroyMock, connectMock, listMock, endMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   destroyMock: vi.fn(),
   connectMock: vi.fn(),
@@ -16,15 +10,11 @@ const {
 
 vi.mock('@aws-sdk/client-s3', () => {
   class ListBucketsCommand {
-    constructor(public readonly input: unknown) {}
+    constructor(public readonly input: { ContinuationToken?: string }) {}
   }
 
   class GetBucketLocationCommand {
-    constructor(public readonly input: unknown) {}
-  }
-
-  class HeadBucketCommand {
-    constructor(public readonly input: unknown) {}
+    constructor(public readonly input: { Bucket: string }) {}
   }
 
   class S3Client {
@@ -34,7 +24,6 @@ vi.mock('@aws-sdk/client-s3', () => {
 
   return {
     GetBucketLocationCommand,
-    HeadBucketCommand,
     ListBucketsCommand,
     S3Client,
   }
@@ -48,9 +37,9 @@ vi.mock('ssh2-sftp-client', () => ({
   },
 }))
 
-import { listS3Buckets, testConnection } from './connectionTesting'
+import { testConnection } from './connectionTesting'
 
-describe('connectionTesting input validation', () => {
+describe('testConnection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     destroyMock.mockReturnValue(undefined)
@@ -59,18 +48,7 @@ describe('connectionTesting input validation', () => {
     endMock.mockResolvedValue(undefined)
   })
 
-  it('listS3Buckets は不正な S3 認証入力を拒否する', async () => {
-    await expect(
-      listS3Buckets({
-        region: 'ap-northeast-1',
-        accessKeyId: 'AKIA...',
-        secretAccessKey: 'secret',
-        sessionToken: 123 as unknown as string,
-      })
-    ).rejects.toThrow('Invalid S3 credentials.')
-  })
-
-  it('testConnection は不正な SFTP 設定を失敗結果で返す', async () => {
+  it('不正な SFTP 設定を失敗結果で返す', async () => {
     await expect(
       testConnection({
         id: 'sftp-1',
@@ -81,56 +59,23 @@ describe('connectionTesting input validation', () => {
         password: 'secret',
         rootPath: '/exports',
       } as unknown as Parameters<typeof testConnection>[0])
-    ).resolves.toEqual({
-      ok: false,
-      message: 'Invalid connection settings.',
-    })
+    ).resolves.toEqual({ ok: false, message: 'Invalid connection settings.' })
   })
 
-  it('testConnection は不正な S3 設定を失敗結果で返す', async () => {
+  it('不正な S3 設定（sessionToken 欠落）を失敗結果で返す', async () => {
     await expect(
       testConnection({
         id: 's3-1',
         name: 'Broken S3',
         kind: 's3',
         region: 'ap-northeast-1',
-        bucket: 'bucket-a',
-        prefix: 'daily',
         accessKeyId: 'AKIA...',
         secretAccessKey: 'secret',
       } as unknown as Parameters<typeof testConnection>[0])
-    ).resolves.toEqual({
-      ok: false,
-      message: 'Invalid connection settings.',
-    })
+    ).resolves.toEqual({ ok: false, message: 'Invalid connection settings.' })
   })
 
-  it('listS3Buckets は同一リージョンの bucket だけを名前順で返す', async () => {
-    sendMock.mockImplementation(async (command: { input: { Bucket?: string } }) => {
-      if (!('Bucket' in command.input)) {
-        return {
-          Buckets: [{ Name: 'z-bucket' }, { Name: 'eu-bucket' }, { Name: 'a-bucket' }],
-        }
-      }
-
-      if (command.input.Bucket === 'z-bucket') return { LocationConstraint: 'ap-northeast-1' }
-      if (command.input.Bucket === 'eu-bucket') return { LocationConstraint: 'EU' }
-      return { LocationConstraint: undefined }
-    })
-
-    await expect(
-      listS3Buckets({
-        region: 'ap-northeast-1',
-        accessKeyId: 'AKIA...',
-        secretAccessKey: 'secret',
-        sessionToken: '',
-      })
-    ).resolves.toEqual(['z-bucket'])
-
-    expect(destroyMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('testConnection は SFTP 接続成功時に成功結果を返す', async () => {
+  it('SFTP 接続成功時に成功結果を返す', async () => {
     await expect(
       testConnection({
         id: 'sftp-1',
@@ -142,10 +87,7 @@ describe('connectionTesting input validation', () => {
         password: 'secret',
         rootPath: '/exports',
       })
-    ).resolves.toEqual({
-      ok: true,
-      message: 'Connected to example.com:22.',
-    })
+    ).resolves.toEqual({ ok: true, message: 'Connected to example.com:22.' })
 
     expect(connectMock).toHaveBeenCalledWith({
       host: 'example.com',
@@ -158,8 +100,15 @@ describe('connectionTesting input validation', () => {
     expect(endMock).toHaveBeenCalledTimes(1)
   })
 
-  it('testConnection は S3 接続成功時に成功結果を返す', async () => {
-    sendMock.mockResolvedValue({})
+  it('S3 は ListBuckets + region 解決で成功し、region 内 bucket 数を報告する', async () => {
+    sendMock.mockImplementation(async (command: { constructor: { name: string }; input: { Bucket?: string } }) => {
+      if (command.constructor.name === 'ListBucketsCommand') {
+        return { Buckets: [{ Name: 'a-bucket' }, { Name: 'eu-bucket' }, { Name: 'z-bucket' }] }
+      }
+      // a / z は設定 region に一致、eu は別 region。
+      if (command.input.Bucket === 'eu-bucket') return { LocationConstraint: 'EU' }
+      return { LocationConstraint: 'ap-northeast-1' }
+    })
 
     await expect(
       testConnection({
@@ -167,18 +116,32 @@ describe('connectionTesting input validation', () => {
         name: 'S3',
         kind: 's3',
         region: 'ap-northeast-1',
-        bucket: 'bucket-a',
-        prefix: 'daily',
         accessKeyId: 'AKIA...',
         secretAccessKey: 'secret',
         sessionToken: '',
       })
-    ).resolves.toEqual({
-      ok: true,
-      message: 'Connected to s3://bucket-a.',
+    ).resolves.toEqual({ ok: true, message: 'Connected to S3 (ap-northeast-1): 2 accessible bucket(s).' })
+
+    expect(destroyMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('S3 の権限エラーは失敗結果として surface する', async () => {
+    sendMock.mockImplementation(async (command: { constructor: { name: string } }) => {
+      if (command.constructor.name === 'ListBucketsCommand') throw new Error('AccessDenied')
+      return {}
     })
 
-    expect(sendMock).toHaveBeenCalledTimes(1)
+    await expect(
+      testConnection({
+        id: 's3-1',
+        name: 'S3',
+        kind: 's3',
+        region: 'ap-northeast-1',
+        accessKeyId: 'AKIA...',
+        secretAccessKey: 'secret',
+        sessionToken: '',
+      })
+    ).resolves.toEqual({ ok: false, message: 'AccessDenied' })
     expect(destroyMock).toHaveBeenCalledTimes(1)
   })
 })

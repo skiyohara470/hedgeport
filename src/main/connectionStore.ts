@@ -31,10 +31,9 @@ export function isConnectionTarget(value: unknown): value is ConnectionTarget {
   }
 
   if (target.kind === 's3') {
+    // bucket / prefix はアカウント単位モデルでは持たない。legacy レコードに残っていても無視する。
     return (
       isString(target.region) &&
-      isString(target.bucket) &&
-      isString(target.prefix) &&
       isString(target.accessKeyId) &&
       isString(target.secretAccessKey) &&
       isString(target.sessionToken)
@@ -42,6 +41,30 @@ export function isConnectionTarget(value: unknown): value is ConnectionTarget {
   }
 
   return false
+}
+
+/**
+ * 永続レコードを現行の接続設定形状へ正規化する。
+ * S3 の legacy `bucket` / `prefix` を取り除き、他フィールドは保持する（データ消失なし）。
+ * 正規化後の形状で保存されるため、次回保存時に legacy フィールドは消える。
+ *
+ * @param target 検証済みの接続設定（legacy フィールドを含み得る）
+ * @returns 現行形状の接続設定
+ */
+export function migrateConnectionTarget(target: ConnectionTarget): ConnectionTarget {
+  if (target.kind !== 's3') return target
+  // 余分な legacy フィールド（bucket / prefix）を含めず、現行 S3 形状だけを組み立てる。
+  const { id, name, lastLocalPath, region, accessKeyId, secretAccessKey, sessionToken } = target
+  return {
+    kind: 's3',
+    id,
+    name,
+    ...(lastLocalPath !== undefined ? { lastLocalPath } : {}),
+    region,
+    accessKeyId,
+    secretAccessKey,
+    sessionToken,
+  }
 }
 
 function connectionsFilePath(): string {
@@ -54,7 +77,8 @@ export async function loadConnections(): Promise<ConnectionTarget[]> {
     if (!Array.isArray(parsed) || !parsed.every(isConnectionTarget)) {
       throw new Error('Connections file has an invalid format.')
     }
-    return parsed
+    // legacy S3 レコード（bucket / prefix 付き）を現行形状へ正規化して返す。
+    return parsed.map(migrateConnectionTarget)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
@@ -64,12 +88,14 @@ export async function loadConnections(): Promise<ConnectionTarget[]> {
 export async function saveConnections(targets: ConnectionTarget[]): Promise<void> {
   if (!targets.every(isConnectionTarget)) throw new Error('Invalid connection settings.')
 
+  // legacy shape（bucket / prefix 付き S3）が IPC 等から渡っても、永続化前に現行形状へ正規化する。
+  const normalized = targets.map(migrateConnectionTarget)
   const directory = app.getPath('userData')
   const destination = connectionsFilePath()
   const temporary = `${destination}.tmp`
   // 一時ファイルへ書いてから rename し、破損した JSON が残る確率を下げる。
   await mkdir(directory, { recursive: true })
-  await writeFile(temporary, `${JSON.stringify(targets, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await writeFile(temporary, `${JSON.stringify(normalized, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   await rename(temporary, destination)
   await chmod(destination, 0o600)
 }

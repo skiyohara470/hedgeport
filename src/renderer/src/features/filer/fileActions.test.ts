@@ -132,6 +132,36 @@ describe('describeActions', () => {
     // 非 mac/非 Windows のテスト環境では File Manager 表記。
     expect(find(localSingle, 'reveal').label).toBe('Show in File Manager')
   })
+
+  it('S3 bucket 一覧ルートでは mutation / 転送 / open-with を無効化し、ディレクトリ Open のみ残す', () => {
+    // bucket（ディレクトリ）を単一選択した状態の root。
+    const root = baseContext({ selection: [dir('bucket-a')], isBucketListRoot: true })
+    // Open（ディレクトリ移動）は有効。
+    expect(find(root, 'open').enabled).toBe(true)
+    // mutation / 転送 / open-with / copy-path は無効。
+    for (const id of [
+      'open-with',
+      'download-local',
+      'download-dialog',
+      'copy',
+      'paste',
+      'rename',
+      'copy-path',
+      'delete',
+      'new-folder',
+    ] as FileActionId[]) {
+      expect(find({ ...root, hasClipboard: true }, id).enabled).toBe(false)
+    }
+  })
+
+  it('bucket 内（非ルート）では通常の S3 アクションが有効に戻る', () => {
+    const insideBucket = baseContext({ selection: [file('a.txt')], isBucketListRoot: false })
+    expect(find(insideBucket, 'download-local').enabled).toBe(true)
+    expect(find(insideBucket, 'delete').enabled).toBe(true)
+    expect(find(insideBucket, 'rename').enabled).toBe(true)
+    expect(find({ ...insideBucket, hasClipboard: true }, 'paste').enabled).toBe(true)
+    expect(find(baseContext({ selection: [], isBucketListRoot: false }), 'new-folder').enabled).toBe(true)
+  })
 })
 
 describe('summarizeSelection', () => {

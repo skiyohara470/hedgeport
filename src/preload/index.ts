@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { ConnectionTarget, S3BucketListRequest } from '../shared/connections'
+import type { ConnectionTarget } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
 import type {
   BatchItem,
@@ -25,7 +25,6 @@ const api = {
   loadConnections: (): Promise<ConnectionTarget[]> => ipcRenderer.invoke('connections:load'),
   saveConnections: (targets: ConnectionTarget[]): Promise<void> => ipcRenderer.invoke('connections:save', targets),
   testConnection: (target: ConnectionTarget) => ipcRenderer.invoke('connections:test', target),
-  listS3Buckets: (request: S3BucketListRequest): Promise<string[]> => ipcRenderer.invoke('s3:buckets', request),
   listStorage: (target: ConnectionTarget, path: string) => ipcRenderer.invoke('storage:list', target, path),
   downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string): Promise<void> =>
     ipcRenderer.invoke('storage:download', target, remotePath, localPath),

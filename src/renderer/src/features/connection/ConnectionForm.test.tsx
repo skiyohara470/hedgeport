@@ -38,27 +38,31 @@ describe('ConnectionForm', () => {
     render(<ConnectionForm onSave={onSave} onCancel={vi.fn()} />)
 
     fireEvent.click(screen.getByLabelText('S3'))
-    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Archive bucket' } })
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Archive account' } })
     fireEvent.change(screen.getByLabelText('Region'), { target: { value: 'us-west-2' } })
-    fireEvent.change(screen.getByLabelText('Bucket'), { target: { value: 'hedgeport-archive' } })
-    fireEvent.change(screen.getByLabelText('Prefix'), { target: { value: 'daily/' } })
     fireEvent.change(screen.getByLabelText('Access Key ID'), { target: { value: 'AKIAEXAMPLE' } })
     fireEvent.change(screen.getByLabelText('Secret Access Key'), { target: { value: 'secret' } })
     fireEvent.change(screen.getByLabelText('Session Token'), { target: { value: 'token' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add connection' }))
 
+    // bucket / prefix は持たない（アカウント単位）。
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 's3',
-        name: 'Archive bucket',
+        name: 'Archive account',
         region: 'us-west-2',
-        bucket: 'hedgeport-archive',
-        prefix: 'daily/',
         accessKeyId: 'AKIAEXAMPLE',
         secretAccessKey: 'secret',
         sessionToken: 'token',
       })
     )
+    const saved = onSave.mock.calls[0][0]
+    expect(saved).not.toHaveProperty('bucket')
+    expect(saved).not.toHaveProperty('prefix')
+    // Bucket / Prefix / Fetch buckets の UI は無い。
+    expect(screen.queryByLabelText('Bucket')).toBeNull()
+    expect(screen.queryByLabelText('Prefix')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Fetch buckets' })).toBeNull()
   })
 
   it('既存接続を編集するとIDと種別を維持する', () => {
@@ -107,8 +111,6 @@ describe('ConnectionForm', () => {
       name: 'Archive',
       kind: 's3',
       region: 'ap-northeast-1',
-      bucket: 'archive',
-      prefix: '',
       accessKeyId: 'access-key',
       secretAccessKey: 'secret-key',
       sessionToken: '',
@@ -122,7 +124,9 @@ describe('ConnectionForm', () => {
   })
 
   it('入力中のS3設定で接続テストして結果を表示する', async () => {
-    const testConnection = vi.fn().mockResolvedValue({ ok: true, message: 'Connected to s3://archive.' })
+    const testConnection = vi
+      .fn()
+      .mockResolvedValue({ ok: true, message: 'Connected to S3 (ap-northeast-1): 3 accessible bucket(s).' })
     Object.defineProperty(window, 'hedgeport', {
       configurable: true,
       value: { testConnection },
@@ -131,63 +135,19 @@ describe('ConnectionForm', () => {
 
     fireEvent.click(screen.getByLabelText('S3'))
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Archive' } })
-    fireEvent.change(screen.getByLabelText('Bucket'), { target: { value: 'archive' } })
     fireEvent.change(screen.getByLabelText('Access Key ID'), { target: { value: 'access-key' } })
     fireEvent.change(screen.getByLabelText('Secret Access Key'), { target: { value: 'secret-key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
 
-    expect((await screen.findByRole('status')).textContent).toBe('Connected to s3://archive.')
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'Connected to S3 (ap-northeast-1): 3 accessible bucket(s).'
+    )
     expect(testConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 's3',
-        bucket: 'archive',
         accessKeyId: 'access-key',
         secretAccessKey: 'secret-key',
       })
     )
-  })
-
-  it('S3バケットを取得して候補から選択できる', async () => {
-    const listS3Buckets = vi.fn().mockResolvedValue(['archive-bucket', 'logs-bucket'])
-    Object.defineProperty(window, 'hedgeport', {
-      configurable: true,
-      value: { listS3Buckets },
-    })
-    render(<ConnectionForm onSave={vi.fn()} onCancel={vi.fn()} />)
-
-    fireEvent.click(screen.getByLabelText('S3'))
-    fireEvent.change(screen.getByLabelText('Region'), { target: { value: 'ap-northeast-1' } })
-    fireEvent.change(screen.getByLabelText('Access Key ID'), { target: { value: 'access-key' } })
-    fireEvent.change(screen.getByLabelText('Secret Access Key'), { target: { value: 'secret-key' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Fetch buckets' }))
-
-    const select = (await screen.findByLabelText('Available buckets')) as HTMLSelectElement
-    fireEvent.change(select, { target: { value: 'logs-bucket' } })
-
-    expect((screen.getByLabelText('Bucket') as HTMLInputElement).value).toBe('logs-bucket')
-    expect(listS3Buckets).toHaveBeenCalledWith({
-      region: 'ap-northeast-1',
-      accessKeyId: 'access-key',
-      secretAccessKey: 'secret-key',
-      sessionToken: '',
-    })
-  })
-
-  it('バケット取得に失敗しても直接入力欄を維持する', async () => {
-    const listS3Buckets = vi.fn().mockRejectedValue(new Error('Access denied'))
-    Object.defineProperty(window, 'hedgeport', {
-      configurable: true,
-      value: { listS3Buckets },
-    })
-    render(<ConnectionForm onSave={vi.fn()} onCancel={vi.fn()} />)
-
-    fireEvent.click(screen.getByLabelText('S3'))
-    fireEvent.change(screen.getByLabelText('Bucket'), { target: { value: 'manual-bucket' } })
-    fireEvent.change(screen.getByLabelText('Access Key ID'), { target: { value: 'access-key' } })
-    fireEvent.change(screen.getByLabelText('Secret Access Key'), { target: { value: 'secret-key' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Fetch buckets' }))
-
-    expect(await screen.findByText('Access denied')).toBeTruthy()
-    expect((screen.getByLabelText('Bucket') as HTMLInputElement).value).toBe('manual-bucket')
   })
 })

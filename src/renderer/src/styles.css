@@ -342,24 +342,6 @@ button:disabled {
   color: #5f6d70;
 }
 
-.bucket-picker {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  align-items: end;
-  gap: 12px;
-}
-
-.bucket-select {
-  min-width: 0;
-}
-
-.bucket-error {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: #efaaa5;
-  font-size: 12px;
-}
-
 .form-note {
   margin: 0;
   color: #829093;
