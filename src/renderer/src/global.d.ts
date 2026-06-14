@@ -6,6 +6,7 @@ import type {
   ExternalEditSession,
   OpenMode,
   PasteRequest,
+  ReadEncoding,
   TextDocument,
   TextEncoding,
 } from '../../shared/transfer'
@@ -25,7 +26,7 @@ declare global {
     listStorage: (target: ConnectionTarget, path: string) => Promise<StorageEntry[]>
     downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string) => Promise<void>
     uploadFile: (target: ConnectionTarget, localPath: string, remotePath: string) => Promise<void>
-    readText: (target: ConnectionTarget, path: string, encoding?: TextEncoding) => Promise<TextDocument>
+    readText: (target: ConnectionTarget, path: string, encoding?: ReadEncoding) => Promise<TextDocument>
     writeText: (
       target: ConnectionTarget,
       path: string,
@@ -60,7 +61,7 @@ declare global {
     paste: (request: PasteRequest) => Promise<BatchOperationResult>
     openLocalPath: (path: string) => Promise<void>
     revealInFolder: (path: string) => Promise<void>
-    readLocalText: (path: string, encoding?: TextEncoding) => Promise<TextDocument>
+    readLocalText: (path: string, encoding?: ReadEncoding) => Promise<TextDocument>
     writeLocalText: (path: string, text: string, encoding?: TextEncoding, bom?: boolean) => Promise<void>
     chooseApplication: (filePath: string) => Promise<string | null>
     startExternalEdit: (

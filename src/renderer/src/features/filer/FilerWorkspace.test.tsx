@@ -3,7 +3,21 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConnectionTarget } from '../connection/connectionTypes'
-import { calculateSplitRatio, FilerWorkspace, RemoteFilePane } from './FilerWorkspace'
+import {
+  calculateSplitRatio,
+  centeredEditorPosition,
+  clampEditorRect,
+  defaultEditorSize,
+  FilerWorkspace,
+  MIN_EDITOR_HEIGHT,
+  MIN_EDITOR_WIDTH,
+  RemoteFilePane,
+  resizeEditorRect,
+} from './FilerWorkspace'
+
+// jsdom の pointer capture は「アクティブな pointer がない」と例外を投げるため、ドラッグ系テスト用に no-op で上書きする。
+Element.prototype.setPointerCapture = () => undefined
+Element.prototype.releasePointerCapture = () => undefined
 
 afterEach(() => {
   cleanup()
@@ -612,9 +626,149 @@ describe('FilerWorkspace ファイル操作', () => {
     )
   })
 
+  it('リモートファイルのダブルクリックは既定の Built-in Editor を開く', async () => {
+    const readText = vi.fn().mockResolvedValue({ text: 'remote body', encoding: 'utf-8', bom: false })
+    await renderWorkspace({ readText })
+
+    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    expect(textarea.value).toBe('remote body')
+    expect(readText).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), '/a.txt', 'auto')
+  })
+
+  it('ローカルファイルのダブルクリックは既定の System Default で開く', async () => {
+    const openLocalPath = vi.fn().mockResolvedValue(undefined)
+    await renderWorkspace({ openLocalPath })
+
+    fireEvent.doubleClick(screen.getByText('draft.txt').closest('tr')!)
+
+    await waitFor(() => expect(openLocalPath).toHaveBeenCalledWith('/work/draft.txt'))
+  })
+
+  it('ディレクトリのダブルクリックは open ではなくペイン内移動する', async () => {
+    const listStorage = vi
+      .fn()
+      .mockResolvedValueOnce([{ name: 'sub', path: '/sub', type: 'directory' }])
+      .mockResolvedValueOnce([{ name: 'inner.txt', path: '/sub/inner.txt', type: 'file' }])
+    const readText = vi.fn().mockResolvedValue({ text: 'x', encoding: 'utf-8', bom: false })
+    await renderWorkspace({ listStorage, readText })
+
+    fireEvent.doubleClick(screen.getByText('sub').closest('tr')!)
+
+    expect(await screen.findByText('inner.txt')).toBeTruthy()
+    await waitFor(() => expect(listStorage).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'sftp-1' }), '/sub'))
+    expect(readText).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('File contents')).toBeNull()
+  })
+
+  it('チェックボックスのダブルクリックではファイルを開かない', async () => {
+    const readText = vi.fn().mockResolvedValue({ text: 'remote body', encoding: 'utf-8', bom: false })
+    await renderWorkspace({ readText })
+
+    fireEvent.doubleClick(screen.getByLabelText('Select a.txt'))
+
+    expect(readText).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('File contents')).toBeNull()
+  })
+
+  it('エディタモーダルは移動・リサイズ用の構造を持ち、初期は中央配置される', async () => {
+    await renderWorkspace()
+
+    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+    await screen.findByLabelText('File contents')
+
+    const modal = document.querySelector('.editor-modal-floating') as HTMLElement
+    expect(modal).toBeTruthy()
+    // ドラッグハンドル（タイトル領域）と右下リサイズハンドルが存在する。
+    expect(modal.querySelector('.editor-drag-handle')).toBeTruthy()
+    expect(screen.getByLabelText('Resize editor')).toBeTruthy()
+    // jsdom viewport(1024x768) に対し 8 割サイズで中央配置される。
+    expect(modal.style.width).toBe('819px')
+    expect(modal.style.height).toBe('614px')
+    expect(modal.style.left).toBe('103px')
+    expect(modal.style.top).toBe('77px')
+  })
+
+  it('ヘッダのタイトルドラッグでモーダルを移動し、画面外はクランプする', async () => {
+    await renderWorkspace()
+
+    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+    await screen.findByLabelText('File contents')
+    const modal = document.querySelector('.editor-modal-floating') as HTMLElement
+    const handle = modal.querySelector('.editor-drag-handle') as HTMLElement
+
+    // jsdom の PointerEvent は init の clientX を反映しないため、座標を持つ MouseEvent を直接 dispatch する。
+    const firePointer = (target: Window | HTMLElement, type: string, clientX: number, clientY: number): void => {
+      fireEvent(target, new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true, cancelable: true }))
+    }
+
+    // 開始 (103,77) から +60,+40 ドラッグ → (163,117)。
+    firePointer(handle, 'pointerdown', 200, 200)
+    firePointer(window, 'pointermove', 260, 240)
+    expect(modal.style.left).toBe('163px')
+    expect(modal.style.top).toBe('117px')
+
+    // 画面外へ大きく動かしてもモーダル全体が viewport 内（maxX=1024-819=205, maxY=768-614=154）。
+    firePointer(window, 'pointermove', 100000, 100000)
+    expect(modal.style.left).toBe('205px')
+    expect(modal.style.top).toBe('154px')
+    firePointer(window, 'pointerup', 0, 0)
+  })
+
+  it('ドラッグ中にエディタを閉じても window リスナーが残らない', async () => {
+    await renderWorkspace()
+
+    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+    await screen.findByLabelText('File contents')
+    const modal = document.querySelector('.editor-modal-floating') as HTMLElement
+    const handle = modal.querySelector('.editor-drag-handle') as HTMLElement
+
+    const firePointer = (target: Window | HTMLElement, type: string, clientX: number, clientY: number): void => {
+      fireEvent(target, new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true, cancelable: true }))
+    }
+
+    // ドラッグ開始 → pointerup を出さずにエディタを閉じる。
+    firePointer(handle, 'pointerdown', 200, 200)
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }))
+    expect(document.querySelector('.editor-modal-floating')).toBeNull()
+
+    // 閉じた後の pointermove は何も起こさない（リスナー解除済み・例外も出ない）。
+    expect(() => firePointer(window, 'pointermove', 5000, 5000)).not.toThrow()
+    expect(document.querySelector('.editor-modal-floating')).toBeNull()
+  })
+
+  it('リモート初回読みは auto を要求し、検出した concrete encoding を表示・保存する', async () => {
+    const readText = vi.fn().mockResolvedValue({ text: '日本語', encoding: 'shift_jis', bom: false })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    await renderWorkspace({ readText, writeText })
+
+    const remoteRow = screen.getByText('a.txt').closest('tr')!
+    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+
+    await screen.findByLabelText('File contents')
+    // 初回は auto 要求。NEVER save with auto: 検出された concrete (shift_jis) を select に表示する。
+    expect(readText).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), '/a.txt', 'auto')
+    const select = screen.getByLabelText('Encoding') as HTMLSelectElement
+    await waitFor(() => expect(select.value).toBe('shift_jis'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sftp-1' }),
+        '/a.txt',
+        '日本語',
+        'shift_jis',
+        false
+      )
+    )
+  })
+
   it('UTF-8 不正時は文字コード選択を促し、shift_jis 選択で再読込できる', async () => {
     const readText = vi.fn(async (_target, _path, encoding?: string) => {
-      if (encoding === undefined || encoding === 'utf-8') {
+      // 初回は auto で読み、判定不能を模して文字コード選択を促す。手動 shift_jis で成功。
+      if (encoding === undefined || encoding === 'auto' || encoding === 'utf-8') {
         throw new Error('This file is not valid UTF-8. Choose another encoding.')
       }
       return { text: '日本語テキスト', encoding: 'shift_jis', bom: false }
@@ -986,7 +1140,8 @@ describe('FilerWorkspace ファイル操作', () => {
 
     const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
     expect(textarea.value).toBe('local body')
-    await waitFor(() => expect(readLocalText).toHaveBeenCalledWith('/work/draft.txt', 'utf-8'))
+    // 初回読みは auto。保存は検出された concrete encoding (utf-8) を使う。
+    await waitFor(() => expect(readLocalText).toHaveBeenCalledWith('/work/draft.txt', 'auto'))
     fireEvent.change(textarea, { target: { value: 'edited local' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(writeLocalText).toHaveBeenCalledWith('/work/draft.txt', 'edited local', 'utf-8', false))
@@ -1115,5 +1270,74 @@ describe('calculateSplitRatio', () => {
   it('左右の最小幅を20%に制限する', () => {
     expect(calculateSplitRatio(0, 100, 500)).toBe(20)
     expect(calculateSplitRatio(700, 100, 500)).toBe(80)
+  })
+})
+
+describe('editor modal geometry helpers', () => {
+  const viewport = { width: 1000, height: 800 }
+
+  it('defaultEditorSize は viewport の 8 割を実効 min / 上限でクランプする', () => {
+    expect(defaultEditorSize(viewport)).toEqual({ width: 800, height: 640 })
+    // viewport が設定 min より小さい場合は overflow させず viewport 寸法まで縮退する。
+    expect(defaultEditorSize({ width: 300, height: 200 })).toEqual({ width: 300, height: 200 })
+  })
+
+  it('centeredEditorPosition は viewport 中央へ配置する', () => {
+    expect(centeredEditorPosition({ width: 800, height: 640 }, viewport)).toEqual({ x: 100, y: 80 })
+  })
+
+  it('clampEditorRect はサイズと位置を合わせてモーダル全体を viewport 内へ収める', () => {
+    // 既に収まる矩形はそのまま。
+    expect(clampEditorRect({ x: 100, y: 80, width: 800, height: 640 }, viewport)).toEqual({
+      x: 100,
+      y: 80,
+      width: 800,
+      height: 640,
+    })
+    // 負座標は 0 へ。
+    expect(clampEditorRect({ x: -50, y: -30, width: 400, height: 300 }, viewport)).toEqual({
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 300,
+    })
+    // (a) 800px 幅モーダルを右下へドラッグしても、サイズ維持で位置を [0, viewport-size] に収める。
+    expect(clampEditorRect({ x: 904, y: 704, width: 800, height: 640 }, viewport)).toEqual({
+      x: 200,
+      y: 160,
+      width: 800,
+      height: 640,
+    })
+    // サイズが viewport を超える場合は viewport 上限へ。
+    expect(clampEditorRect({ x: 0, y: 0, width: 5000, height: 5000 }, viewport)).toEqual({
+      x: 0,
+      y: 0,
+      width: 1000,
+      height: 800,
+    })
+  })
+
+  it('clampEditorRect は (c) viewport が設定 min より小さくても overflow させない', () => {
+    expect(clampEditorRect({ x: 50, y: 50, width: 800, height: 600 }, { width: 300, height: 200 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 200,
+    })
+  })
+
+  it('resizeEditorRect は (b) 左上を固定し最大サイズを現在位置で使える領域に制限する', () => {
+    const start = { x: 200, y: 160, width: 400, height: 300 }
+    // 通常の拡大。
+    expect(resizeEditorRect(start, 100, 50, viewport)).toEqual({ x: 200, y: 160, width: 500, height: 350 })
+    // 右下方向へ大きく拡大しても right/bottom edge が viewport を超えない（maxW=800, maxH=640）。
+    expect(resizeEditorRect(start, 5000, 5000, viewport)).toEqual({ x: 200, y: 160, width: 800, height: 640 })
+    // 縮小は実効 min まで。
+    expect(resizeEditorRect(start, -5000, -5000, viewport)).toEqual({
+      x: 200,
+      y: 160,
+      width: MIN_EDITOR_WIDTH,
+      height: MIN_EDITOR_HEIGHT,
+    })
   })
 })

@@ -8,6 +8,7 @@ import type {
   ExternalEditSession,
   OpenMode,
   PasteRequest,
+  ReadEncoding,
   TextDocument,
   TextEncoding,
 } from '../shared/transfer'
@@ -30,7 +31,7 @@ const api = {
     ipcRenderer.invoke('storage:download', target, remotePath, localPath),
   uploadFile: (target: ConnectionTarget, localPath: string, remotePath: string): Promise<void> =>
     ipcRenderer.invoke('storage:upload', target, localPath, remotePath),
-  readText: (target: ConnectionTarget, path: string, encoding?: TextEncoding): Promise<TextDocument> =>
+  readText: (target: ConnectionTarget, path: string, encoding?: ReadEncoding): Promise<TextDocument> =>
     ipcRenderer.invoke('storage:read-text', target, path, encoding),
   writeText: (
     target: ConnectionTarget,
@@ -73,7 +74,7 @@ const api = {
   paste: (request: PasteRequest): Promise<BatchOperationResult> => ipcRenderer.invoke('clipboard:paste', request),
   openLocalPath: (path: string): Promise<void> => ipcRenderer.invoke('local:open-path', path),
   revealInFolder: (path: string): Promise<void> => ipcRenderer.invoke('local:reveal', path),
-  readLocalText: (path: string, encoding?: TextEncoding): Promise<TextDocument> =>
+  readLocalText: (path: string, encoding?: ReadEncoding): Promise<TextDocument> =>
     ipcRenderer.invoke('local:read-text', path, encoding),
   writeLocalText: (path: string, text: string, encoding?: TextEncoding, bom?: boolean): Promise<void> =>
     ipcRenderer.invoke('local:write-text', path, text, encoding, bom),

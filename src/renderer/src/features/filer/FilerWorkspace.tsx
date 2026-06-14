@@ -6,6 +6,7 @@ import {
   type ClipboardEntry,
   type ExternalEditSession,
   type OpenMode,
+  type ReadEncoding,
   type TextEncoding,
 } from '../../../../shared/transfer'
 import type { StorageEntry } from '../../../../shared/storage'
@@ -182,6 +183,114 @@ function breadcrumbs(path: string): Array<{ label: string; path: string }> {
 export function calculateSplitRatio(clientX: number, left: number, width: number): number {
   if (width <= 0) return 50
   return Math.min(80, Math.max(20, ((clientX - left) / width) * 100))
+}
+
+/** Built-in Editor / Preview モーダルの矩形（fixed 配置の左上座標とサイズ）。 */
+export interface EditorRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** 画面の利用可能サイズ。 */
+export interface Viewport {
+  width: number
+  height: number
+}
+
+/** モーダルの最小サイズ（textarea が使える程度を担保）。 */
+export const MIN_EDITOR_WIDTH = 360
+export const MIN_EDITOR_HEIGHT = 240
+
+/**
+ * viewport に収まる実効的な最小サイズ。
+ * viewport が設定 min より小さい場合は overflow させず viewport 寸法まで最小を縮退させる。
+ *
+ * @param viewport 画面の利用可能サイズ
+ * @returns 実効最小 width / height
+ */
+function effectiveMinSize(viewport: Viewport): { width: number; height: number } {
+  return {
+    width: Math.min(MIN_EDITOR_WIDTH, Math.max(0, viewport.width)),
+    height: Math.min(MIN_EDITOR_HEIGHT, Math.max(0, viewport.height)),
+  }
+}
+
+/**
+ * 新規ファイルを開いた時の初期サイズ。viewport の 8 割を目安に実効 min / viewport 上限でクランプする。
+ *
+ * @param viewport 画面の利用可能サイズ
+ * @returns 初期 width / height
+ */
+export function defaultEditorSize(viewport: Viewport): { width: number; height: number } {
+  const min = effectiveMinSize(viewport)
+  return {
+    width: Math.min(Math.max(min.width, Math.round(viewport.width * 0.8)), viewport.width),
+    height: Math.min(Math.max(min.height, Math.round(viewport.height * 0.8)), viewport.height),
+  }
+}
+
+/**
+ * 指定サイズを viewport 中央に配置する左上座標を返す（負にはしない）。
+ *
+ * @param size モーダルのサイズ
+ * @param viewport 画面の利用可能サイズ
+ * @returns 中央配置の x / y
+ */
+export function centeredEditorPosition(
+  size: { width: number; height: number },
+  viewport: Viewport
+): { x: number; y: number } {
+  return {
+    x: Math.max(0, Math.round((viewport.width - size.width) / 2)),
+    y: Math.max(0, Math.round((viewport.height - size.height) / 2)),
+  }
+}
+
+/**
+ * モーダル矩形を「全体が viewport 内に収まる」ようクランプする（位置を考慮した一括クランプ）。
+ * サイズを実効 min / viewport 上限へ収めたうえで、左上を [0, viewport - size] に収め、
+ * 右端・下端が画面外へ出ないようにする（ヘッダ操作系・右下リサイズハンドルが常に到達可能）。
+ * ドラッグ・viewport リサイズ・初期配置で共通利用する。
+ *
+ * @param rect クランプ前の矩形
+ * @param viewport 画面の利用可能サイズ
+ * @returns viewport 内に収めた矩形
+ */
+export function clampEditorRect(rect: EditorRect, viewport: Viewport): EditorRect {
+  const min = effectiveMinSize(viewport)
+  const width = Math.min(Math.max(min.width, rect.width), Math.max(min.width, viewport.width))
+  const height = Math.min(Math.max(min.height, rect.height), Math.max(min.height, viewport.height))
+  return {
+    width,
+    height,
+    x: Math.min(Math.max(0, rect.x), Math.max(0, viewport.width - width)),
+    y: Math.min(Math.max(0, rect.y), Math.max(0, viewport.height - height)),
+  }
+}
+
+/**
+ * 右下ハンドルのドラッグ量からリサイズ後の矩形を求める。
+ * 左上は固定し、最大幅/高さは現在位置で使える領域（viewport.width - x / viewport.height - y）に制限する。
+ * これにより右端・下端が画面外へ出ず、ヘッダ操作系も画面内に残る。
+ *
+ * @param start リサイズ開始時の矩形（左上を維持）
+ * @param dx 横方向の移動量
+ * @param dy 縦方向の移動量
+ * @param viewport 画面の利用可能サイズ
+ * @returns リサイズ後の矩形
+ */
+export function resizeEditorRect(start: EditorRect, dx: number, dy: number, viewport: Viewport): EditorRect {
+  const min = effectiveMinSize(viewport)
+  const maxWidth = Math.max(min.width, viewport.width - start.x)
+  const maxHeight = Math.max(min.height, viewport.height - start.y)
+  return {
+    x: start.x,
+    y: start.y,
+    width: Math.min(Math.max(min.width, start.width + dx), maxWidth),
+    height: Math.min(Math.max(min.height, start.height + dy), maxHeight),
+  }
 }
 
 type SortKey = 'name' | 'size' | 'modifiedAt'
@@ -386,6 +495,22 @@ function FileTable({
   }
 
   /**
+   * 行のダブルクリックで既定の open を実行する。
+   * ディレクトリはペイン内移動、ファイルは Enter / eye button / context menu の Open と同じ
+   * 既定アクション（remote=Built-in Editor / local=System Default）を委譲する。
+   * チェックボックス等の操作系をダブルクリックした場合はファイルを開かない。
+   */
+  const handleRowDoubleClick = (event: MouseEvent<HTMLTableRowElement>, entry: StorageEntry): void => {
+    // input / button / checkbox セル由来のダブルクリックでは open しない（選択操作と切り分ける）。
+    if ((event.target as HTMLElement).closest('input, button, .checkbox-cell')) return
+    if (entry.type === 'directory') {
+      onOpenDirectory(entry.path)
+      return
+    }
+    onAction('open', [entry])
+  }
+
+  /**
    * 同じ列を再度押した時だけ昇順/降順を反転する。
    */
   const toggleSort = (key: SortKey): void => {
@@ -543,7 +668,7 @@ function FileTable({
                       .filter(Boolean)
                       .join(' ')}
                     aria-selected={selected}
-                    title={entry.type === 'directory' ? 'Double-click to open' : undefined}
+                    title="Double-click to open"
                     onClick={(event) => select(event, entry.path)}
                     onContextMenu={(event) => {
                       event.preventDefault()
@@ -558,7 +683,7 @@ function FileTable({
                       }
                       setContextMenu({ x: event.clientX, y: event.clientY, entry })
                     }}
-                    onDoubleClick={entry.type === 'directory' ? () => onOpenDirectory(entry.path) : undefined}
+                    onDoubleClick={(event) => handleRowDoubleClick(event, entry)}
                   >
                     <td className="checkbox-cell">
                       <input
@@ -1085,6 +1210,12 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
     dirty: boolean
     readOnly: boolean
   } | null>(null)
+  // Built-in Editor / Preview モーダルの位置とサイズ（移動・リサイズ用）。新規ファイルを開くたび中央へ reset。
+  const [editorRect, setEditorRect] = useState<EditorRect | null>(null)
+  // ドラッグ / リサイズ中の開始スナップショット（pointer 座標と開始時の矩形）。
+  const editorDragRef = useRef<{ pointerX: number; pointerY: number; rect: EditorRect } | null>(null)
+  // ドラッグ / リサイズ中の window リスナー解除関数。エディタが途中で閉じても確実に解除するため保持する。
+  const editorDragTeardownRef = useRef<(() => void) | null>(null)
   // キーボードショートカットの対象ペイン。remote は常に表示されるため既定は remote。
   const [focusedPane, setFocusedPane] = useState<PaneKind>('remote')
   // アプリ内クリップボード。tab 切替後も保持し、接続設定スナップショットを含める。
@@ -1100,6 +1231,24 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
   // id は「この dialog インスタンス」を識別し、tab 切替後に開き直した別 dialog へ旧結果を注入しないために使う。
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null)
   const nameDialogSeq = useRef(0)
+
+  // viewport 縮小後でもヘッダ/Close へ手が届くよう、モーダル矩形全体を再クランプする。
+  useEffect(() => {
+    if (!editor) return
+    const handleResize = (): void => {
+      const viewport = { width: window.innerWidth, height: window.innerHeight }
+      setEditorRect((current) => (current ? clampEditorRect(current, viewport) : current))
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [editor])
+
+  // エディタが閉じる / アンマウントしても、ドラッグ中の window リスナーを確実に解除する。
+  useEffect(() => {
+    if (editor) return
+    editorDragTeardownRef.current?.()
+  }, [editor])
+  useEffect(() => () => editorDragTeardownRef.current?.(), [])
 
   /**
    * 接続未選択の新規タブを開く。
@@ -1418,6 +1567,10 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
    */
   const openInEditor = (source: PaneKind, entry: StorageEntry, readOnly: boolean): void => {
     if (source === 'remote' && !activeTarget) return
+    // 新規ファイルを開くたびに、中央・sensible サイズへ位置とサイズを reset する（viewport 内へクランプ）。
+    const viewport = { width: window.innerWidth, height: window.innerHeight }
+    const size = defaultEditorSize(viewport)
+    setEditorRect(clampEditorRect({ ...centeredEditorPosition(size, viewport), ...size }, viewport))
     setEditor({
       source,
       entry,
@@ -1429,14 +1582,16 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
       dirty: false,
       readOnly,
     })
-    loadEditorContent(source, entry, 'utf-8')
+    // 初回は auto 判定で読み、検出された concrete encoding を後で表示する。
+    loadEditorContent(source, entry, 'auto')
   }
 
   /**
    * 指定文字コードでファイルを読み込み、エディタへ反映する。source に応じ remote/local を使い分ける。
-   * UTF-8 decode 失敗時はモーダルを閉じず、文字コード選択を促すエラーを表示する。
+   * encoding は 'auto'（自動判定）または concrete。返却 doc は常に concrete encoding を持つ。
+   * UTF-8 decode 失敗 / 判定不能時はモーダルを閉じず、文字コード選択を促すエラーを表示する。
    */
-  const loadEditorContent = (source: PaneKind, entry: StorageEntry, encoding: TextEncoding): void => {
+  const loadEditorContent = (source: PaneKind, entry: StorageEntry, encoding: ReadEncoding): void => {
     const scope = captureScope()
     const read =
       source === 'remote' && activeTarget
@@ -1462,10 +1617,11 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
         setEditor((current) =>
           isCurrentScope(scope) && current && current.entry.path === entry.path
             ? {
+                // encoding は concrete のみ保持する。auto 読みの失敗時は直前の concrete 値を維持し、
+                // 手動切替の失敗時は changeEditorEncoding が設定済みの選択値を維持する。
                 ...current,
                 status: 'error',
                 error: reason instanceof Error ? reason.message : 'Could not open file.',
-                encoding,
               }
             : current
         )
@@ -1864,6 +2020,64 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
   }
 
   /**
+   * モーダルのドラッグ / リサイズの pointer ループを開始する共通処理。
+   * pointer capture で追従し、move ごとに updateRect で新しい矩形を計算・反映する。
+   * 解除関数を editorDragTeardownRef へ保存し、エディタが途中で閉じても cleanup できるようにする。
+   *
+   * @param event 起点の pointerdown
+   * @param updateRect 開始矩形と pointer 移動量(dx,dy)・viewport から新しい矩形を返す関数
+   */
+  const beginEditorPointerDrag = (
+    event: PointerEvent<HTMLDivElement>,
+    updateRect: (start: EditorRect, dx: number, dy: number, viewport: Viewport) => EditorRect
+  ): void => {
+    if (event.button !== 0 || !editorRect) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    editorDragRef.current = { pointerX: event.clientX, pointerY: event.clientY, rect: editorRect }
+
+    const handleMove = (moveEvent: globalThis.PointerEvent): void => {
+      const start = editorDragRef.current
+      if (!start) return
+      const viewport = { width: window.innerWidth, height: window.innerHeight }
+      setEditorRect(
+        updateRect(start.rect, moveEvent.clientX - start.pointerX, moveEvent.clientY - start.pointerY, viewport)
+      )
+    }
+    const teardown = (): void => {
+      editorDragRef.current = null
+      editorDragTeardownRef.current = null
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', teardown)
+      window.removeEventListener('pointercancel', teardown)
+    }
+    editorDragTeardownRef.current = teardown
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', teardown)
+    window.addEventListener('pointercancel', teardown)
+  }
+
+  /**
+   * Built-in Editor / Preview モーダルを専用ハンドル（ヘッダのタイトル領域）でドラッグ移動する。
+   * pointer capture で確実に追従し、矩形全体が viewport 内に収まるようクランプする。
+   * ヘッダの操作系（encoding / BOM / Close）は別要素なのでドラッグ起点にならない。
+   */
+  const startEditorDrag = (event: PointerEvent<HTMLDivElement>): void => {
+    beginEditorPointerDrag(event, (start, dx, dy, viewport) =>
+      clampEditorRect({ ...start, x: start.x + dx, y: start.y + dy }, viewport)
+    )
+  }
+
+  /**
+   * モーダル右下のハンドルでリサイズする。左上を固定し、最大サイズは現在位置で使える領域に制限する
+   * （右端・下端が画面外へ出ず、ヘッダ操作系・リサイズハンドルが常に到達可能）。
+   */
+  const startEditorResize = (event: PointerEvent<HTMLDivElement>): void => {
+    event.stopPropagation()
+    beginEditorPointerDrag(event, (start, dx, dy, viewport) => resizeEditorRect(start, dx, dy, viewport))
+  }
+
+  /**
    * キーボード操作でも分割比率を 5% 単位で調整できるようにする。
    */
   const resizeSplitWithKeyboard = (event: KeyboardEvent<HTMLDivElement>): void => {
@@ -2032,9 +2246,17 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
           aria-modal="true"
           aria-label={`${editor.readOnly ? 'Preview' : 'Edit'} ${editor.entry.name}`}
         >
-          <div className="editor-modal">
+          <div
+            className="editor-modal editor-modal-floating"
+            style={
+              editorRect
+                ? { width: editorRect.width, height: editorRect.height, left: editorRect.x, top: editorRect.y }
+                : undefined
+            }
+          >
             <header className="editor-header">
-              <h2>
+              {/* タイトル領域だけをドラッグ起点にする（header の操作系はドラッグを開始しない）。 */}
+              <h2 className="editor-drag-handle" title="Drag to move" onPointerDown={startEditorDrag}>
                 {editor.readOnly ? 'Preview: ' : ''}
                 {editor.entry.name}
               </h2>
@@ -2132,6 +2354,14 @@ export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, 
                 </div>
               </>
             )}
+            {/* 右下のリサイズハンドル（pointer events）。textarea などの上に重ねる。 */}
+            <div
+              className="editor-resize-handle"
+              role="separator"
+              aria-label="Resize editor"
+              aria-orientation="horizontal"
+              onPointerDown={startEditorResize}
+            />
           </div>
         </div>
       )}

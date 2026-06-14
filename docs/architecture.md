@@ -34,7 +34,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `localFileListing.ts`
   ローカルファイル一覧取得。
 - `fileTransfer.ts`
-  単一ファイルの download / downloadToDirectory / upload / read-text / write-text / delete。入力検証（接続設定・リモート仮想パス・ローカル絶対パス）とテキスト編集の安全上限（NUL / サイズ）をここで担保する。バイト列は main 内で完結させ、renderer IPC へ往復させない。文字コードは `iconv-lite` で一元 decode/encode（utf-8 / shift_jis / euc-jp）。read は `TextDocument {text, encoding, bom}` を返し BOM 有無を保持、write は BOM を既定維持する。utf-8 不正時は文字コード選択を促す専用エラー。shift_jis / euc-jp は write 前に encode→decode の厳密 roundtrip を行い、表現不能文字（'?' 置換）を検出したら保存せずエラーにする。
+  単一ファイルの download / downloadToDirectory / upload / read-text / write-text / delete。入力検証（接続設定・リモート仮想パス・ローカル絶対パス）とテキスト編集の安全上限（NUL / サイズ）をここで担保する。バイト列は main 内で完結させ、renderer IPC へ往復させない。文字コードは `iconv-lite` で一元 decode/encode（utf-8 / shift_jis / euc-jp）。read は `auto`（自動判定）または concrete を受け、`TextDocument {text, encoding, bom}` を返す（encoding は常に concrete で BOM 有無を保持）。write は concrete のみ受け付け BOM を既定維持する。utf-8 不正時は文字コード選択を促す専用エラー。shift_jis / euc-jp は write 前に encode→decode の厳密 roundtrip を行い、表現不能文字（'?' 置換）を検出したら保存せずエラーにする。
 - `storageMutations.ts`
   ディレクトリ作成 / リネーム（remote / local）。名前検証（空白のみ・`.`・`..`・`/`・`\`・NUL 拒否）、canonical パス構築、source 自身 / 配下 / ルートへの移動拒否、既存名衝突拒否をここで担保し、provider / fs へ委譲する。
 - `batchOperations.ts`
@@ -44,7 +44,10 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `dialogs.ts`
   保存先ディレクトリ選択ダイアログ。`event.sender` から親ウィンドウを得て attach し、キャンセル時は null を返す。
 - `textCodec.ts`
-  文字コードの decode/encode を一元化（`decodeTextDocument` / `encodeTextDocument` / `resolveEncoding`）。fileTransfer / fileOpening が共有する純ロジック。
+  文字コードの decode/encode と自動判定を一元化（`decodeTextDocument` / `encodeTextDocument` / `detectEncoding` / `resolveEncoding` / `resolveReadEncoding`）。fileTransfer / fileOpening が共有する純ロジック。
+  read は `auto | TextEncoding` を受け、返す `TextDocument.encoding` は常に concrete（保存にそのまま使える）。write は concrete のみ受け付け、`auto` は拒否する。
+  **自動判定の方針（`detectEncoding`）**: ① サイズ上限 / NUL（バイナリ）は呼び出し側の `decodeTextDocument` で先に弾く。② UTF-8 BOM → utf-8。③ fatal な UTF-8 デコードが通る（ASCII / 空を含む）→ utf-8。④ それ以外は Shift_JIS / EUC-JP を構造的に検証し、妥当な候補が 1 つだけならそれを採用。⑤ 両方妥当なときだけ「日本語らしさスコア」（ひらがな・全角カタカナ・漢字を加点、置換文字 U+FFFD を減点。半角カナは誤デコードで多発するため数えない）を比較し、差が `SCORE_MARGIN`（=2）以上の明確な勝者がいる場合のみ採用。⑥ 曖昧 / どちらも不正なら黙って選ばず、手動選択を促す例外を投げる。
+  **限界**: ヒューリスティックのため短いバイト列や日本語をほぼ含まない非 UTF-8 は曖昧判定になりやすく、その場合は手動 encoding 選択が必要。ISO-2022-JP / UTF-16 等は対象外。
 - `fileOpening.ts`
   ローカルテキストの読み書き（built-in editor / preview 用）。open（`O_NOFOLLOW`, `O_CREAT` なし）→ fstat で通常ファイルを確認 → 同一 handle で read / truncate+write し、symlink・不在・差し替え（TOCTOU）を防ぐ。`O_NOFOLLOW` 非対応 OS は open 前 lstat（symlink 拒否）＋ open 後の dev/ino identity 比較でフォールバック。Choose Application はアプリ選択 → `spawn(shell:false, 引数配列)` で起動（mac は `open -a`、exit code / `error` を監視し失敗は reject）。
 - `externalEdit.ts`
@@ -96,7 +99,7 @@ renderer から main への通信は、必ず preload を経由します。
 | `listLocal(path?)`                                        | `ipcRenderer.invoke('local:list', path)`                                 | `ipcMain.handle('local:list', ...)`                    | ローカル一覧取得                                                           |
 | `downloadFile(target, remotePath, localPath)`             | `ipcRenderer.invoke('storage:download', ...)`                            | `ipcMain.handle('storage:download', ...)`              | リモート→ローカルへ単一ファイル転送                                        |
 | `uploadFile(target, localPath, remotePath)`               | `ipcRenderer.invoke('storage:upload', ...)`                              | `ipcMain.handle('storage:upload', ...)`                | ローカル→リモートへ単一ファイル転送                                        |
-| `readText(target, path, encoding?)`                       | `ipcRenderer.invoke('storage:read-text', target, path, encoding)`        | `ipcMain.handle('storage:read-text', ...)`             | リモートファイルをテキストで読む（utf-8/shift_jis/euc-jp、既定 utf-8）     |
+| `readText(target, path, encoding?)`                       | `ipcRenderer.invoke('storage:read-text', target, path, encoding)`        | `ipcMain.handle('storage:read-text', ...)`             | リモートファイルをテキストで読む（auto 自動判定 / utf-8 / shift_jis / euc-jp、既定 auto）|
 | `writeText(target, path, text, encoding?)`                | `ipcRenderer.invoke('storage:write-text', target, path, text, encoding)` | `ipcMain.handle('storage:write-text', ...)`            | リモートファイルへ指定文字コードで保存                                     |
 | `deleteFile(target, path)`                                | `ipcRenderer.invoke('storage:delete', target, path)`                     | `ipcMain.handle('storage:delete', ...)`                | リモートファイル削除                                                       |
 | `downloadToDirectory(target, remotePath, localDirectory)` | `ipcRenderer.invoke('storage:download-to-directory', ...)`               | `ipcMain.handle('storage:download-to-directory', ...)` | リモート→指定ローカルディレクトリへ保存（名前結合は main）                 |
@@ -112,7 +115,7 @@ renderer から main への通信は、必ず preload を経由します。
 | `paste(request)`                                          | `ipcRenderer.invoke('clipboard:paste', request)`                         | `ipcMain.handle('clipboard:paste', ...)`               | アプリ内クリップボードの貼り付け（remote/local 4 組合せ）                  |
 | `openLocalPath(path)`                                     | `ipcRenderer.invoke('local:open-path', path)`                            | `ipcMain.handle('local:open-path', ...)`               | ローカルを OS 既定アプリで開く（openPath 非空エラーは例外化）              |
 | `revealInFolder(path)`                                    | `ipcRenderer.invoke('local:reveal', path)`                               | `ipcMain.handle('local:reveal', ...)`                  | Finder/Explorer/File Manager で表示（showItemInFolder）                    |
-| `readLocalText(path, encoding?)`                          | `ipcRenderer.invoke('local:read-text', path, encoding)`                  | `ipcMain.handle('local:read-text', ...)`               | ローカルテキスト読み（built-in/preview、symlink 不可）                     |
+| `readLocalText(path, encoding?)`                          | `ipcRenderer.invoke('local:read-text', path, encoding)`                  | `ipcMain.handle('local:read-text', ...)`               | ローカルテキスト読み（auto 自動判定、built-in/preview、symlink 不可）      |
 | `writeLocalText(path, text, encoding?, bom?)`             | `ipcRenderer.invoke('local:write-text', path, text, encoding, bom)`      | `ipcMain.handle('local:write-text', ...)`              | ローカルテキスト保存（regular file のみ）                                  |
 | `chooseApplication(filePath)`                             | `ipcRenderer.invoke('local:open-with', filePath)`                        | `ipcMain.handle('local:open-with', ...)`               | アプリ選択→shell:false spawn 起動（キャンセルは null）                     |
 | `startExternalEdit(target, remotePath, mode)`             | `ipcRenderer.invoke('external:open', ...)`                               | `ipcMain.handle('external:open', ...)`                 | リモートを temp へ download→外部アプリ起動（重複は再利用、cancel は null） |
@@ -196,7 +199,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - `src/renderer/src/features/filer/fileActions.test.ts`
   アクション capability 算出・件数ラベル・ショートカット判定（pure module）。
 - `src/main/textCodec.test.ts`
-  decode/encode（BOM 保持・不正 UTF-8・SJIS roundtrip 拒否・未対応 encoding）。
+  decode/encode（BOM 保持・不正 UTF-8・SJIS roundtrip 拒否・未対応 encoding）と自動判定（UTF-8 BOM / ASCII・空 / UTF-8 JP / SJIS JP / EUC-JP JP / 曖昧で例外 / NUL バイナリ）。
 - `src/main/fileOpening.test.ts`
   ローカル read/write（symlink/不在/非regular 拒否、O_NOFOLLOW 非対応フォールバックの identity 検証）・Choose Application（spawn shell:false / 引数配列 / spawn error→reject / キャンセル）。
 - `src/main/externalEdit.test.ts`
@@ -224,9 +227,11 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - アプリ内 Copy/Paste（Mod+C / Mod+V）は remote↔local の 4 組合せに対応。同名は上書きせず `name copy.ext` で採番。クリップボードは接続設定スナップショットを含み、タブ切替後も保持する。**大容量 / 大量ファイルは現 Provider が全量を一度に read/write する制約があり、メモリ使用に注意（ストリーミング / 進捗は将来対応）。**
 - バッチ結果は逐次処理で成功 / 失敗件数を status bar に集計表示する（部分失敗を許容）。
 - 各ペインは「nav 行（接続名/パンくず/移動）＋検索 input + action toolbar 帯」を固定し、一覧（`.file-table-scroll`）だけがスクロールする（flex レイアウトでマジック値なし）。検索 input は可視ラベルを持たず `aria-label="Search files"`。空ディレクトリでも検索 / toolbar は表示維持。
-- リモートテキストは文字コード選択編集に対応（utf-8 / shift_jis / euc-jp、iconv-lite で main 一元変換）。エディタ header に encoding select を常設。未編集時の encoding 変更は即再読込、編集済みは確認後。UTF-8 不正時はモーダルを閉じず別 encoding で再読込できる。保存は現在の encoding で行う。
+- リモート / ローカルテキストは文字コード選択編集に対応（utf-8 / shift_jis / euc-jp、iconv-lite で main 一元変換）。Built-in Editor / Preview の初回読みは `auto` で自動判定し、検出された concrete encoding をエディタ header の encoding select に表示する（保存は常に concrete で行い、`auto` で保存しない）。未編集時の encoding 変更は即再読込、編集済みは確認後。判定不能 / UTF-8 不正時はモーダルを閉じず別 encoding で再読込できる。
 - ローカルは Finder/Explorer/File Manager 表示（`Show in …` = showItemInFolder、`Open Folder in …` = openPath）に対応。OS により表記を出し分ける。
-- ファイルの開き方は Open（既定）/ Open…（方式選択）。toolbar は eye の split button（本体=Open / ▼=Open…）。`OpenMode` = preview / built-in / system-default / choose-app。既定は remote=Built-in Editor、local=System Default。Preview は読み取り専用ビューア。Built-in Editor は remote/local 双方対応（local は regular file のみ、symlink 不可）。Choose Application は `spawn(shell:false, 引数配列)` でアプリ起動（パス検証）。workspace 右上の旧 preview eye ボタンは廃止。
+- ファイルの開き方は Open（既定）/ Open…（方式選択）。toolbar は eye の split button（本体=Open / ▼=Open…）。`OpenMode` = preview / built-in / system-default / choose-app。既定は remote=Built-in Editor、local=System Default。Preview は読み取り専用ビューア。Built-in Editor は remote/local 双方対応（local は regular file のみ、symlink 不可）。Choose Application は `spawn(shell:false, 引数配列)` でアプリ起動（パス検証）。macOS では選択ダイアログの `defaultPath` を `/Applications` にし `.app` のみへ絞る（`.app` は OS が単一ファイル扱いのため内部実行ファイルは選ばれない）。Windows / Linux は従来どおり `defaultPath` / filter なし。workspace 右上の旧 preview eye ボタンは廃止。
+- 一覧行のダブルクリックは既定の Open を実行する。ディレクトリはペイン内移動、ファイルは Enter / eye button / context menu の Open と同じ既定アクション（remote=Built-in Editor / local=System Default）を開く。チェックボックスや行内コントロール（`input` / `button` / `.checkbox-cell`）由来のダブルクリックではファイルを開かない。
+- Built-in Editor / Preview モーダルは移動・リサイズ可能（名前入力モーダルは対象外）。ヘッダのタイトル領域（`.editor-drag-handle`）を pointer events + pointer capture でドラッグ移動し、ヘッダの操作系（encoding / BOM / Close）はドラッグ起点にならない。右下ハンドル（`.editor-resize-handle`）で両方向にリサイズ。位置・サイズの純粋ジオメトリは `defaultEditorSize` / `centeredEditorPosition` / `clampEditorRect` / `resizeEditorRect`（最小 `MIN_EDITOR_WIDTH` x `MIN_EDITOR_HEIGHT`）に切り出して単体テストする。`clampEditorRect` は位置を考慮してモーダル全体を viewport 内へ収め（サイズを viewport 上限へ収めた上で左上を `[0, viewport - size]` に制限）、ドラッグ・viewport リサイズ・初期配置で共通利用する。`resizeEditorRect` は左上を固定し最大サイズを現在位置で使える領域（`viewport - position`）に制限するため、右端・下端と操作系が常に到達可能。viewport が設定 min より小さい場合は実効最小を viewport 寸法まで縮退させ overflow させない。新規ファイルを開くたびに中央・sensible サイズへ reset する。ドラッグ / リサイズの window リスナーはエディタが途中で閉じても確実に解除する。textarea は flex で本体サイズに追従（`min-height` で可用性担保）。
 - remote の System Default / Choose Application は外部編集セッション（`externalEdit.ts`）で対応。temp へ download→外部アプリ起動し、画面下部のバナーに `Upload Changes` / `Reveal Local Copy` / `Discard` と状態（open / uploading / uploaded / error）を表示。自動 upload はせず、明示操作のみ。外部プロセス終了で破棄/アップロードはしない。同一ファイルの再オープンは既存セッションを再利用する。
 - 表示ラベル類（タブ / ヘッダー / パンくず / 一覧名 / メニュー）は `user-select: none`。input / textarea / editor は選択可能のまま。
 - ダウンロードは 2 系統。`Download to Local`（⌘/Ctrl+D）はローカルペインの現在ディレクトリへ即時保存し、ローカルペイン未表示時は無効化する。`Download file…`（⌘/Ctrl+Shift+D）は保存先をダイアログで選ぶ（キャンセルは no-op）。

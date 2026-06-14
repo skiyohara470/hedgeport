@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { openMock, lstatMock, spawnMock, showOpenDialogMock, fromWebContentsMock } = vi.hoisted(() => ({
   openMock: vi.fn(),
@@ -112,10 +112,21 @@ describe('openVerifiedRegularFile フォールバック（O_NOFOLLOW 非対応 =
 })
 
 describe('chooseApplicationAndOpen（spawn 失敗を監視）', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+
   beforeEach(() => {
     vi.clearAllMocks()
     fromWebContentsMock.mockReturnValue(null)
   })
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+  })
+
+  /** テスト用に process.platform を差し替える。 */
+  const setPlatform = (platform: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  }
 
   /** darwin の open（spawn → exit code）を模した child を返すよう仕込む。 */
   const spawnExit = (code: number) => {
@@ -127,6 +138,46 @@ describe('chooseApplicationAndOpen（spawn 失敗を監視）', () => {
       return child
     })
   }
+
+  /** Windows/Linux の detached spawn（'spawn' で成立）を模した child を返すよう仕込む。 */
+  const spawnSucceed = () => {
+    spawnMock.mockImplementation(() => {
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      setImmediate(() => child.emit('spawn'))
+      return child
+    })
+  }
+
+  it('macOS は /Applications を defaultPath にし .app へ絞り、親ウィンドウへ attach する', async () => {
+    setPlatform('darwin')
+    const parent = {} as unknown
+    fromWebContentsMock.mockReturnValue(parent)
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['/Applications/Edit.app'] })
+    spawnExit(0)
+
+    await expect(chooseApplicationAndOpen(event, '/work/a.txt')).resolves.toBe('/Applications/Edit.app')
+    expect(showOpenDialogMock).toHaveBeenCalledWith(
+      parent,
+      expect.objectContaining({
+        properties: ['openFile'],
+        defaultPath: '/Applications',
+        filters: [{ name: 'Applications', extensions: ['app'] }],
+      })
+    )
+  })
+
+  it('Windows/Linux は defaultPath / filters を付けない（従来動作）', async () => {
+    setPlatform('win32')
+    // テスト実行環境は posix のため、application パス検証(isAbsolute)を通る絶対パスを使う。
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['/opt/editor/bin/editor'] })
+    spawnSucceed()
+
+    await expect(chooseApplicationAndOpen(event, '/work/a.txt')).resolves.toBe('/opt/editor/bin/editor')
+    const options = showOpenDialogMock.mock.calls[0].at(-1) as Record<string, unknown>
+    expect(options).not.toHaveProperty('defaultPath')
+    expect(options).not.toHaveProperty('filters')
+  })
 
   it('キャンセル時は null を返し spawn しない', async () => {
     showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] })

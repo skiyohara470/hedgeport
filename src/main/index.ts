@@ -21,7 +21,7 @@ import { createStorageProvider } from './providers/createStorageProvider'
 import { createLocalDirectory, createRemoteDirectory, renameLocal, renameRemote } from './storageMutations'
 import type { ConnectionTarget, S3BucketListRequest } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
-import type { BatchItem, OpenMode, PasteRequest, TextEncoding } from '../shared/transfer'
+import type { BatchItem, OpenMode, PasteRequest, ReadEncoding, TextEncoding } from '../shared/transfer'
 
 const rendererUrl = process.env.ELECTRON_RENDERER_URL
 
@@ -111,7 +111,7 @@ app.whenReady().then(() => {
   ipcMain.handle('storage:upload', (_event, target: ConnectionTarget, localPath: string, remotePath: string) =>
     uploadFile(target, localPath, remotePath)
   )
-  ipcMain.handle('storage:read-text', (_event, target: ConnectionTarget, path: string, encoding?: TextEncoding) =>
+  ipcMain.handle('storage:read-text', (_event, target: ConnectionTarget, path: string, encoding?: ReadEncoding) =>
     readTextFile(target, path, encoding)
   )
   ipcMain.handle(
@@ -171,7 +171,7 @@ app.whenReady().then(() => {
     shell.showItemInFolder(path)
   })
   // ローカルテキストの読み書き（built-in editor / preview 用）と、アプリ選択起動。
-  ipcMain.handle('local:read-text', (_event, path: string, encoding?: TextEncoding) => readLocalText(path, encoding))
+  ipcMain.handle('local:read-text', (_event, path: string, encoding?: ReadEncoding) => readLocalText(path, encoding))
   ipcMain.handle('local:write-text', (_event, path: string, text: string, encoding?: TextEncoding, bom?: boolean) =>
     writeLocalText(path, text, encoding, bom)
   )

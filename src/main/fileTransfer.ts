@@ -6,7 +6,7 @@ import type { TextDocument } from '../shared/transfer'
 import { isConnectionTarget } from './connectionStore'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { basenameVirtual, isCanonicalVirtualEntryPath } from './providers/pathUtils'
-import { decodeTextDocument, encodeTextDocument, resolveEncoding } from './textCodec'
+import { decodeTextDocument, encodeTextDocument, resolveEncoding, resolveReadEncoding } from './textCodec'
 
 /**
  * IPC 越しに渡る接続設定を main 側で必ず再検証する。
@@ -118,9 +118,9 @@ export async function uploadFile(target: unknown, localPath: unknown, remotePath
 export async function readTextFile(target: unknown, path: unknown, encoding?: unknown): Promise<TextDocument> {
   assertConnectionTarget(target)
   assertRemoteFilePath(path)
-  const textEncoding = resolveEncoding(encoding)
+  const readEncoding = resolveReadEncoding(encoding)
   const data = await createStorageProvider(target).read(path)
-  return decodeTextDocument(data, textEncoding)
+  return decodeTextDocument(data, readEncoding)
 }
 
 /**

@@ -1108,6 +1108,17 @@ tbody tr.selected-row td {
   box-shadow: 0 24px 70px rgb(0 0 0 / 45%);
 }
 
+/* 移動・リサイズ対応の Built-in Editor / Preview モーダル。位置とサイズは JS から inline style で与える。 */
+.editor-modal-floating {
+  position: fixed;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
 .editor-header {
   display: flex;
   align-items: center;
@@ -1117,6 +1128,35 @@ tbody tr.selected-row td {
 .editor-header h2 {
   margin: 0;
   font-size: 14px;
+}
+
+/* ヘッダのタイトル領域＝ドラッグ起点。操作系（tools）は別要素なのでドラッグを開始しない。 */
+.editor-drag-handle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.editor-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* 右下のリサイズハンドル。 */
+.editor-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, #4a585b 50%);
+  border-bottom-right-radius: 10px;
 }
 
 .editor-header-tools {
@@ -1158,7 +1198,9 @@ tbody tr.selected-row td {
 
 .editor-textarea {
   width: 100%;
-  min-height: 320px;
+  /* モーダル本体のリサイズに追従して伸縮する。最小高さで textarea の可用性を担保。 */
+  flex: 1 1 auto;
+  min-height: 120px;
   padding: 10px;
   border: 1px solid #313b3d;
   border-radius: 8px;
@@ -1166,7 +1208,8 @@ tbody tr.selected-row td {
   color: #d7e1e3;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
-  resize: vertical;
+  resize: none;
+  overflow: auto;
 }
 
 .editor-actions {
