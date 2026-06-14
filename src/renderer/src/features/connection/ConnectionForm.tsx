@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react'
 
+import { useTranslation } from '../i18n/I18nContext'
+import { resolveMessage, type Message, type TranslationKey } from '../i18n/translations'
 import type { ConnectionTarget } from './connectionTypes'
 
 interface ConnectionFormProps {
@@ -21,8 +23,10 @@ function createId(): string {
 /**
  * SFTP / S3 の接続設定を作成・編集するフォーム。
  * kind ごとに必要な入力をまとめ、保存前検証と疎通確認もここで行う。
+ * 可視文言は翻訳キーで保持し、言語切替時も即時更新される。
  */
 export function ConnectionForm({ target, onSave, onCancel, onDelete }: ConnectionFormProps) {
+  const { t } = useTranslation()
   const [kind, setKind] = useState<ConnectionKind>(target?.kind ?? 'sftp')
   const [name, setName] = useState(target?.name ?? '')
   const [host, setHost] = useState(target?.kind === 'sftp' ? target.host : '')
@@ -34,8 +38,8 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
   const [accessKeyId, setAccessKeyId] = useState(target?.kind === 's3' ? target.accessKeyId : '')
   const [secretAccessKey, setSecretAccessKey] = useState(target?.kind === 's3' ? target.secretAccessKey : '')
   const [sessionToken, setSessionToken] = useState(target?.kind === 's3' ? target.sessionToken : '')
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: Message } | null>(null)
+  const [formError, setFormError] = useState<Message | null>(null)
   const [isTesting, setIsTesting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -74,19 +78,19 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
   }
 
   /**
-   * 接続種別ごとの必須項目を確認し、最初のエラー文言だけ返す。
+   * 接続種別ごとの必須項目を確認し、最初のエラー翻訳キーだけ返す。
    */
-  const validate = (connection: ConnectionTarget): string | null => {
-    if (!connection.name) return 'Display name is required.'
+  const validate = (connection: ConnectionTarget): TranslationKey | null => {
+    if (!connection.name) return 'cf.errDisplayName'
     if (connection.kind === 'sftp') {
-      if (!connection.host || !connection.username || !connection.rootPath) return 'Complete all required SFTP fields.'
+      if (!connection.host || !connection.username || !connection.rootPath) return 'cf.errSftpFields'
       if (!Number.isInteger(connection.port) || connection.port < 1 || connection.port > 65535) {
-        return 'Port must be between 1 and 65535.'
+        return 'cf.errPort'
       }
       return null
     }
     if (!connection.region || !connection.accessKeyId || !connection.secretAccessKey) {
-      return 'Complete all required S3 fields.'
+      return 'cf.errS3Fields'
     }
     return null
   }
@@ -99,7 +103,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     const connection = buildTarget()
     const validationError = validate(connection)
     if (validationError) {
-      setFormError(validationError)
+      setFormError({ key: validationError })
       return
     }
 
@@ -108,7 +112,8 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       setFormError(null)
       await onSave(connection)
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Could not save this connection.')
+      // main/server 由来は raw、それ以外は renderer fallback キー。
+      setFormError(error instanceof Error ? { raw: error.message } : { key: 'cf.errSave' })
     } finally {
       setIsSaving(false)
     }
@@ -122,19 +127,18 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
     const connection = buildTarget()
     const validationError = validate(connection)
     if (validationError) {
-      setTestResult({ ok: false, message: validationError })
+      setTestResult({ ok: false, message: { key: validationError } })
       return
     }
 
     try {
       setIsTesting(true)
       setTestResult(null)
-      setTestResult(await window.hedgeport.testConnection(connection))
+      // 接続テスト結果メッセージは main 由来のため raw 表示。
+      const result = await window.hedgeport.testConnection(connection)
+      setTestResult({ ok: result.ok, message: { raw: result.message } })
     } catch (error) {
-      setTestResult({
-        ok: false,
-        message: error instanceof Error ? error.message : 'Connection test failed.',
-      })
+      setTestResult({ ok: false, message: error instanceof Error ? { raw: error.message } : { key: 'cf.errTest' } })
     } finally {
       setIsTesting(false)
     }
@@ -150,32 +154,32 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       setFormError(null)
       await onDelete()
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Could not delete this connection.')
+      setFormError(error instanceof Error ? { raw: error.message } : { key: 'cf.errDelete' })
     } finally {
       setIsSaving(false)
     }
   }
 
   return (
-    <form className="connection-form" onSubmit={submit}>
+    <form className="connection-form" noValidate onSubmit={submit}>
       <div className="form-heading">
         <div>
-          <p className="eyebrow">{target ? 'Edit connection' : 'New connection'}</p>
-          <h1>{target ? target.name : 'Add connection'}</h1>
+          <p className="eyebrow">{target ? t('cf.editConnection') : t('cf.newConnection')}</p>
+          <h1>{target ? target.name : t('cf.addConnection')}</h1>
         </div>
         <button className="text-button" type="button" onClick={onCancel}>
-          Cancel
+          {t('common.cancel')}
         </button>
       </div>
 
       {target ? (
         <div className="connection-type-display">
-          <span>Connection type</span>
+          <span>{t('cf.connectionType')}</span>
           <strong>{target.kind.toUpperCase()}</strong>
         </div>
       ) : (
         <fieldset className="kind-selector">
-          <legend>Connection type</legend>
+          <legend>{t('cf.connectionType')}</legend>
           <label>
             <input type="radio" name="kind" value="sftp" checked={kind === 'sftp'} onChange={() => setKind('sftp')} />
             SFTP
@@ -188,14 +192,14 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       )}
 
       <label className="form-field">
-        <span>Display name</span>
+        <span>{t('cf.displayName')}</span>
         <input value={name} required autoFocus onChange={(event) => setName(event.target.value)} />
       </label>
 
       {kind === 'sftp' ? (
         <div className="form-grid">
           <label className="form-field form-field-wide">
-            <span>Host</span>
+            <span>{t('cf.host')}</span>
             <input
               value={host}
               required
@@ -204,7 +208,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
             />
           </label>
           <label className="form-field">
-            <span>Port</span>
+            <span>{t('cf.port')}</span>
             <input
               type="number"
               value={port}
@@ -215,15 +219,15 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
             />
           </label>
           <label className="form-field">
-            <span>Username</span>
+            <span>{t('cf.username')}</span>
             <input value={username} required onChange={(event) => setUsername(event.target.value)} />
           </label>
           <label className="form-field">
-            <span>Start path</span>
+            <span>{t('cf.startPath')}</span>
             <input value={rootPath} required onChange={(event) => setRootPath(event.target.value)} />
           </label>
           <label className="form-field">
-            <span>Password</span>
+            <span>{t('cf.password')}</span>
             <input
               type="password"
               value={password}
@@ -235,11 +239,11 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       ) : (
         <div className="form-grid">
           <label className="form-field form-field-wide">
-            <span>Region</span>
+            <span>{t('cf.region')}</span>
             <input value={region} required onChange={(event) => setRegion(event.target.value)} />
           </label>
           <label className="form-field">
-            <span>Access Key ID</span>
+            <span>{t('cf.accessKeyId')}</span>
             <input
               value={accessKeyId}
               required
@@ -248,7 +252,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
             />
           </label>
           <label className="form-field">
-            <span>Secret Access Key</span>
+            <span>{t('cf.secretAccessKey')}</span>
             <input
               type="password"
               value={secretAccessKey}
@@ -258,27 +262,27 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
             />
           </label>
           <label className="form-field form-field-wide">
-            <span>Session Token</span>
+            <span>{t('cf.sessionToken')}</span>
             <input
               type="password"
               value={sessionToken}
               autoComplete="off"
-              placeholder="Optional for temporary credentials"
+              placeholder={t('cf.sessionTokenPlaceholder')}
               onChange={(event) => setSessionToken(event.target.value)}
             />
           </label>
         </div>
       )}
 
-      <p className="form-note">Credentials are stored in a local JSON file with owner-only file permissions.</p>
+      <p className="form-note">{t('cf.credentialsNote')}</p>
       {testResult && (
         <p className={testResult.ok ? 'connection-result success' : 'connection-result error'} role="status">
-          {testResult.message}
+          {resolveMessage(t, testResult.message)}
         </p>
       )}
       {formError && (
         <p className="connection-result error" role="alert">
-          {formError}
+          {resolveMessage(t, formError)}
         </p>
       )}
       <div className="form-actions">
@@ -289,7 +293,7 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
             disabled={isSaving || isTesting}
             onClick={() => void deleteConnection()}
           >
-            Delete connection
+            {t('cf.deleteConnection')}
           </button>
         )}
         <div className="form-primary-actions">
@@ -299,10 +303,10 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
             disabled={isSaving || isTesting}
             onClick={() => void testConnection()}
           >
-            {isTesting ? 'Testing...' : 'Test connection'}
+            {isTesting ? t('cf.testing') : t('cf.testConnection')}
           </button>
           <button className="primary-button" type="submit" disabled={isSaving || isTesting}>
-            {isSaving ? 'Saving...' : target ? 'Save changes' : 'Add connection'}
+            {isSaving ? t('cf.saving') : target ? t('cf.saveChanges') : t('cf.addConnection')}
           </button>
         </div>
       </div>

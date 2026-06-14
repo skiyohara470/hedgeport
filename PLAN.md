@@ -258,16 +258,29 @@ Make the file table usable without moving between rows with the mouse.
 
 Complete Japanese and English coverage for every user-visible renderer string.
 
-Known gaps include:
+Status: implemented. ConnectionForm, FilerWorkspace/FileTable, name dialogs,
+editor/preview, external-edit banner, context menus, toolbars, navigation,
+status bar, and fallback errors are routed through the typed `features/i18n`
+dictionary and `useTranslation`. Renderer-generated status/validation messages
+are stored as structured `key + params` (or `raw` for main/server text) so they
+re-translate on language change, and open forms/dialogs/editor update live.
+Plural/count phrasing uses explicit per-language keys. A contract test
+(`src/renderer/src/i18n.contract.test.ts`) flags newly hardcoded visible
+attribute/text/dialog/sentence literals with an explicit technical-term
+allowlist (SFTP, S3, UTF-8 BOM, etc.). Main/server raw error text is
+intentionally left untranslated. Date formatting follows the selected language
+(`ja-JP` / `en-US`), not the OS locale.
 
-- Connection create/edit form labels, help text, validation, test results, and
-  delete actions
+Implemented coverage:
+
+- Connection create/edit form labels, help text, validation (submit and test),
+  test results, and delete actions
 - New-directory and rename dialogs
-- Editor/preview controls, encoding warnings, and external-edit status
+- Editor/preview controls, encoding label, fallbacks, and external-edit status
 - Batch-operation results, fallback errors, context menus, tooltips, titles, and
-  ARIA labels
+  ARIA labels, with explicit singular/plural phrasing per language
 
-Requirements:
+Requirements (met):
 
 - Do not leave user-visible strings embedded directly in React components.
 - Keep translation keys typed and use one shared translator for toolbar,

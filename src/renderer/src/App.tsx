@@ -6,7 +6,7 @@ import type { ConnectionTarget } from './features/connection/connectionTypes'
 import { FilerWorkspace } from './features/filer/FilerWorkspace'
 import { Icon } from './features/icons/Icon'
 import { I18nProvider } from './features/i18n/I18nContext'
-import { createTranslator } from './features/i18n/translations'
+import { createTranslator, resolveMessage, type Message } from './features/i18n/translations'
 import { PreviewWindow } from './features/preview/PreviewWindow'
 import { SettingsDialog } from './features/settings/SettingsDialog'
 import { SettingsProvider } from './features/settings/SettingsContext'
@@ -14,20 +14,22 @@ import { SettingsProvider } from './features/settings/SettingsContext'
 /**
  * renderer 側の最上位コンポーネント。
  * 接続一覧と設定のロード、接続選択状態、設定モーダル、プレビュー画面への分岐をまとめて管理する。
+ * 通知メッセージは構造化（key|raw）で保持し、表示時に現在言語で解決する。
  */
 export function App() {
   const [targets, setTargets] = useState<ConnectionTarget[]>([])
   const [selectedTarget, setSelectedTarget] = useState<ConnectionTarget | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [storageError, setStorageError] = useState<string | null>(null)
+  const [storageError, setStorageError] = useState<Message | null>(null)
   // 並び替え保存中は新しいドラッグを抑止する（save 競合防止）。
   const [reorderBusy, setReorderBusy] = useState(false)
   // 設定モーダル。draft は即時プレビュー用、Cancel で破棄する。
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null)
   const [settingsSaving, setSettingsSaving] = useState(false)
-  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [settingsError, setSettingsError] = useState<Message | null>(null) // 保存失敗（dialog 表示）
+  const [settingsLoadError, setSettingsLoadError] = useState<Message | null>(null) // ロード失敗（welcome 通知）
 
   useEffect(() => {
     // 接続と設定を同時にロードする。設定ロード失敗時は既定で起動して通知する。
@@ -37,13 +39,14 @@ export function App() {
           setTargets(connectionsResult.value)
         } else {
           const reason = connectionsResult.reason
-          setStorageError(reason instanceof Error ? reason.message : 'Could not load connections.')
+          setStorageError(reason instanceof Error ? { raw: reason.message } : { key: 'connection.couldNotLoad' })
         }
         if (settingsResult.status === 'fulfilled') {
           setSettings(settingsResult.value)
         } else {
+          // 既定で起動し、設定ロード完了後の選択言語へ追従できるよう key で通知を保持する。
           setSettings(createDefaultSettings(navigator.language))
-          setSettingsError('settings.couldNotLoad')
+          setSettingsLoadError({ key: 'settings.couldNotLoad' })
         }
       })
       .finally(() => setIsLoading(false))
@@ -88,7 +91,7 @@ export function App() {
       setTargets(next)
       setStorageError(null)
     } catch (error) {
-      setStorageError(error instanceof Error ? error.message : t('connection.couldNotReorder'))
+      setStorageError(error instanceof Error ? { raw: error.message } : { key: 'connection.couldNotReorder' })
     } finally {
       setReorderBusy(false)
     }
@@ -116,10 +119,11 @@ export function App() {
       setSettingsError(null)
       const saved = await window.hedgeport.saveSettings(settingsDraft)
       setSettings(saved)
+      setSettingsLoadError(null)
       setSettingsOpen(false)
       setSettingsDraft(null)
     } catch (error) {
-      setSettingsError(error instanceof Error ? error.message : t('settings.couldNotSave'))
+      setSettingsError(error instanceof Error ? { raw: error.message } : { key: 'settings.couldNotSave' })
     } finally {
       setSettingsSaving(false)
     }
@@ -163,8 +167,10 @@ export function App() {
               <Icon name="settings" />
             </button>
           </div>
-          {storageError && <p className="storage-error">{storageError}</p>}
-          {settingsError && !settingsOpen && <p className="storage-error">{t('settings.couldNotLoad')}</p>}
+          {storageError && <p className="storage-error">{resolveMessage(t, storageError)}</p>}
+          {settingsLoadError && !settingsOpen && (
+            <p className="storage-error">{resolveMessage(t, settingsLoadError)}</p>
+          )}
           <ConnectionManager
             targets={targets}
             settings={settings}
@@ -190,7 +196,7 @@ export function App() {
             onSave={saveSettings}
             onCancel={cancelSettings}
             saving={settingsSaving}
-            error={settingsError && settingsError !== 'settings.couldNotLoad' ? settingsError : null}
+            error={settingsError ? resolveMessage(t, settingsError) : null}
           />
         )}
       </I18nProvider>
