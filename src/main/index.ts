@@ -15,6 +15,7 @@ import { chooseApplicationAndOpen, readLocalText, writeLocalText } from './fileO
 import { isConnectionTarget, loadConnections, saveConnections } from './connectionStore'
 import { testConnection } from './connectionTesting'
 import { pickDirectory } from './dialogs'
+import { loadSettings, saveSettings } from './settingsStore'
 import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
 import { listLocalEntries } from './localFileListing'
 import { createStorageProvider } from './providers/createStorageProvider'
@@ -98,6 +99,9 @@ app.whenReady().then(() => {
   ipcMain.handle('connections:load', loadConnections)
   ipcMain.handle('connections:save', (_event, targets: ConnectionTarget[]) => saveConnections(targets))
   ipcMain.handle('connections:test', (_event, target: ConnectionTarget) => testConnection(target))
+  // アプリ設定のロード / 保存（全体置換、main 側で再検証・正規化）。
+  ipcMain.handle('settings:load', () => loadSettings())
+  ipcMain.handle('settings:save', (_event, settings: unknown) => saveSettings(settings))
   ipcMain.handle('storage:list', async (_event, target: ConnectionTarget, path: string) => {
     if (!isConnectionTarget(target)) throw new Error('Invalid connection settings.')
     return createStorageProvider(target).list(path)

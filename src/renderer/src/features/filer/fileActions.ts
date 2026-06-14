@@ -4,6 +4,7 @@
  * DOM やアプリ状態に依存しない純関数だけを置き、単体テスト可能にする。
  */
 import type { StorageEntry, StorageEntryType } from '../../../../shared/storage'
+import { createTranslator, type Translator } from '../i18n/translations'
 
 /** ショートカットの組み合わせ定義。mod は Cmd(mac)/Ctrl(他)。 */
 export interface ShortcutDescriptor {
@@ -55,6 +56,8 @@ export interface ActionContext {
   canDownloadToLocal: boolean
   /** 内部クリップボードに貼り付け可能な項目があるか。 */
   hasClipboard: boolean
+  /** ラベル生成に使う翻訳関数（未指定なら英語）。 */
+  t?: Translator
   /**
    * remote のみ: S3 のルート（bucket 一覧）を表示しているか。
    * bucket は外部リソースで疑似フォルダではないため、ここでは mutation / 転送 / open-with を不可にし、
@@ -198,36 +201,40 @@ function allFiles(selection: StorageEntry[]): boolean {
 }
 
 /**
- * 選択件数に応じたアクションラベルを返す（例: Delete 4 items）。
+ * 選択件数に応じたアクションラベルを翻訳関数で生成する（例: Delete 4 items / 4 件を削除）。
+ *
+ * @param id アクション識別子
+ * @param count 選択件数
+ * @param t 翻訳関数
  */
-function actionLabel(id: FileActionId, count: number): string {
+function actionLabel(id: FileActionId, count: number, t: Translator): string {
   switch (id) {
     case 'open':
-      return 'Open'
+      return t('action.open')
     case 'open-with':
-      return 'Open…'
+      return t('action.openWith')
     case 'download-local':
-      return count <= 1 ? 'Download to Local' : `Download ${count} files to Local`
+      return count <= 1 ? t('action.downloadLocal') : t('action.downloadLocalN', { count })
     case 'download-dialog':
-      return count <= 1 ? 'Download file…' : `Download ${count} files…`
+      return count <= 1 ? t('action.downloadDialog') : t('action.downloadDialogN', { count })
     case 'upload':
-      return count <= 1 ? 'Upload file' : `Upload ${count} files`
+      return count <= 1 ? t('action.upload') : t('action.uploadN', { count })
     case 'copy':
-      return count <= 1 ? 'Copy' : `Copy ${count} files`
+      return count <= 1 ? t('action.copy') : t('action.copyN', { count })
     case 'paste':
-      return 'Paste'
+      return t('action.paste')
     case 'rename':
-      return 'Rename…'
+      return t('action.rename')
     case 'copy-path':
-      return count <= 1 ? 'Copy path' : 'Copy paths'
+      return count <= 1 ? t('action.copyPath') : t('action.copyPaths')
     case 'delete':
-      return count <= 1 ? 'Delete' : `Delete ${count} items`
+      return count <= 1 ? t('action.deleteOne') : t('action.deleteN', { count })
     case 'new-folder':
-      return 'New Folder…'
+      return t('action.newFolder')
     case 'reveal':
-      return `Show in ${FILE_MANAGER_NAME}`
+      return t('action.revealIn', { manager: FILE_MANAGER_NAME })
     case 'open-folder':
-      return `Open Folder in ${FILE_MANAGER_NAME}`
+      return t('action.openFolderIn', { manager: FILE_MANAGER_NAME })
   }
 }
 
@@ -281,11 +288,13 @@ function isEnabled(id: FileActionId, context: ActionContext): boolean {
  */
 export function describeActions(context: ActionContext): FileActionDescriptor[] {
   const count = context.selection.length
+  // translator 未指定時は英語ラベルにフォールバックする。
+  const t = context.t ?? createTranslator('en')
   return ORDER[context.paneKind].map((id) => {
     const shortcut = SHORTCUTS[id]
     return {
       id,
-      label: actionLabel(id, count),
+      label: actionLabel(id, count, t),
       shortcut,
       shortcutLabel: shortcut ? shortcutLabel(shortcut) : undefined,
       enabled: isEnabled(id, context),

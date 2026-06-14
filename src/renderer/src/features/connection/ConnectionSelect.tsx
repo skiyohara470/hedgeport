@@ -1,5 +1,6 @@
 import { useState, type DragEvent } from 'react'
 
+import { useTranslation } from '../i18n/I18nContext'
 import type { DropPosition } from './connectionReorder'
 import type { ConnectionTarget } from './connectionTypes'
 
@@ -36,6 +37,7 @@ export function ConnectionSelect({
   onReorderDrop,
   reorderBusy = false,
 }: ConnectionSelectProps) {
+  const { t } = useTranslation()
   const canReorder = Boolean(onReorderDrop)
   // ドラッグ中の挿入位置インジケータ表示用。
   const [dropHint, setDropHint] = useState<{ overId: string; position: DropPosition } | null>(null)
@@ -80,8 +82,8 @@ export function ConnectionSelect({
             {canReorder && (
               <span
                 className="connection-drag-handle"
-                aria-label={`Drag ${target.name} to reorder`}
-                title="Drag to reorder"
+                aria-label={t('connection.dragToReorder', { name: target.name })}
+                title={t('connection.dragHint')}
                 draggable={!reorderBusy}
                 onDragStart={(event) => handleDragStart(event, target)}
                 onDragEnd={() => setDropHint(null)}
@@ -112,8 +114,8 @@ export function ConnectionSelect({
               <button
                 className="connection-edit"
                 type="button"
-                aria-label={`Edit ${target.name}`}
-                title={`Edit ${target.name}`}
+                aria-label={t('connection.edit', { name: target.name })}
+                title={t('connection.edit', { name: target.name })}
                 onClick={() => onEdit(target)}
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">

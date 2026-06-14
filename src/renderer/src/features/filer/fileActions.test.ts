@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { StorageEntry } from '../../../../shared/storage'
+import { createTranslator } from '../i18n/translations'
 import {
   describeActions,
   isTypingTarget,
@@ -131,6 +132,17 @@ describe('describeActions', () => {
     expect(find(localMulti, 'open-folder').enabled).toBe(true)
     // 非 mac/非 Windows のテスト環境では File Manager 表記。
     expect(find(localSingle, 'reveal').label).toBe('Show in File Manager')
+  })
+
+  it('translator を渡すとラベルを翻訳する', () => {
+    const ja = createTranslator('ja')
+    const single = baseContext({ selection: [file('a.txt')], t: ja })
+    const multi = baseContext({ selection: [file('a.txt'), file('b.txt'), file('c.txt')], t: ja })
+    expect(find(single, 'open').label).toBe('開く')
+    expect(find(multi, 'delete').label).toBe('3 件を削除')
+    expect(find(baseContext({ paneKind: 'local', selection: [file('a.txt')], t: ja }), 'reveal').label).toBe(
+      'File Manager で表示'
+    )
   })
 
   it('S3 bucket 一覧ルートでは mutation / 転送 / open-with を無効化し、ディレクトリ Open のみ残す', () => {

@@ -2,8 +2,24 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createDefaultSettings } from '../../shared/settings'
 import { App } from './App'
 import type { ConnectionTarget } from './features/connection/connectionTypes'
+
+// jsdom は matchMedia 未実装のため、テーマ追従用にスタブする。
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    dispatchEvent: () => false,
+  }),
+})
 
 afterEach(() => {
   cleanup()
@@ -28,6 +44,8 @@ const setupApi = (overrides: Partial<Record<string, ReturnType<typeof vi.fn>>>, 
   const api = {
     loadConnections: vi.fn().mockResolvedValue(initial),
     saveConnections: vi.fn().mockResolvedValue(undefined),
+    loadSettings: vi.fn().mockResolvedValue(createDefaultSettings('en')),
+    saveSettings: vi.fn().mockImplementation((settings: unknown) => Promise.resolve(settings)),
     ...overrides,
   }
   Object.defineProperty(window, 'hedgeport', { configurable: true, value: api })
@@ -39,6 +57,100 @@ const dropOnto = (targetName: string, sourceId: string): void => {
   const row = screen.getByRole('button', { name: targetName }).closest('li') as HTMLElement
   fireEvent.drop(row, { dataTransfer: { getData: () => sourceId } })
 }
+
+describe('App settings', () => {
+  it('起動画面の gear で設定を開き、保存でテーマを適用・永続化する', async () => {
+    const saveSettings = vi.fn().mockImplementation((s: unknown) => Promise.resolve(s))
+    setupApi({ saveSettings }, [sftp('a')])
+
+    render(<App />)
+    await screen.findByRole('button', { name: 'a' })
+    // 既定 system + prefersDark=false → light。
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } })
+    // 即時プレビューで dark になる。
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: 'dark' })))
+    // モーダルが閉じても適用が維持される。
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+  })
+
+  it('Cancel は変更を破棄してプレビューを元へ戻す', async () => {
+    setupApi({}, [sftp('a')])
+    render(<App />)
+    await screen.findByRole('button', { name: 'a' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } })
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
+  })
+
+  it('言語変更は再起動なしで UI へ即反映する', async () => {
+    const saveSettings = vi.fn().mockImplementation((s: unknown) => Promise.resolve(s))
+    setupApi({ saveSettings }, [sftp('a')])
+    render(<App />)
+    await screen.findByRole('button', { name: 'Add connection' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.change(await screen.findByLabelText('Language'), { target: { value: 'ja' } })
+    // 言語プレビューで Save ボタンも即翻訳されるため、日本語ラベルで押す。
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(await screen.findByRole('button', { name: '接続を追加' })).toBeTruthy()
+    expect(document.documentElement.getAttribute('lang')).toBe('ja')
+  })
+
+  it('外観属性はレイアウトエフェクトで描画前（render 直後・待機なし）に反映される', () => {
+    setupApi({}, [])
+    render(<App />)
+    // useLayoutEffect により render 完了時点で data 属性が付与済み（dark/light 混在フレーム回避）。
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
+    expect(document.documentElement.getAttribute('data-density')).toBe('comfortable')
+  })
+
+  it('設定ロード失敗時は既定で起動し通知を表示する', async () => {
+    const loadSettings = vi.fn().mockRejectedValue(new Error('corrupted'))
+    setupApi({ loadSettings }, [sftp('a')])
+    render(<App />)
+
+    // 既定で起動して接続選択は表示される。
+    expect(await screen.findByRole('button', { name: 'a' })).toBeTruthy()
+    expect(screen.getByText('Could not load settings. Using defaults.')).toBeTruthy()
+  })
+
+  it('workspace ツールバーの Settings も同じダイアログを開く', async () => {
+    setupApi({ listStorage: vi.fn().mockResolvedValue([]) }, [sftp('a')])
+    render(<App />)
+    // 接続を選んで workspace へ入る。
+    fireEvent.click(await screen.findByRole('button', { name: 'a' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
+  })
+
+  it('設定保存失敗時はエラー表示し確定しない', async () => {
+    const saveSettings = vi.fn().mockRejectedValue(new Error('disk full'))
+    setupApi({ saveSettings }, [sftp('a')])
+    render(<App />)
+    await screen.findByRole('button', { name: 'a' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.change(await screen.findByLabelText('Theme'), { target: { value: 'dark' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('disk full')).toBeTruthy()
+    // ダイアログは開いたまま。
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+  })
+})
 
 describe('App connection reorder (drag & drop)', () => {
   it('drop で並び替え後の順序を保存し、一覧へ反映する', async () => {
