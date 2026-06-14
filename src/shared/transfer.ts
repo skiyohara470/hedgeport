@@ -12,9 +12,14 @@ import type { StorageEntryType } from './storage'
 export const MAX_EDITABLE_TEXT_BYTES = 1024 * 1024
 
 /**
- * テキスト編集で扱える文字コード。
+ * テキスト編集で扱える文字コード（保存はこの concrete のみ）。
  */
 export type TextEncoding = 'utf-8' | 'shift_jis' | 'euc-jp'
+
+/**
+ * 読み出し時に指定できる文字コード。'auto' は main 側で自動判定する。
+ */
+export type ReadEncoding = TextEncoding | 'auto'
 
 /**
  * 選択可能な文字コード一覧（UI の select 順 / main の検証に使う）。

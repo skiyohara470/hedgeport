@@ -6,7 +6,7 @@ import { lstat, open, type FileHandle } from 'node:fs/promises'
 import { BrowserWindow, dialog, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 
 import type { TextDocument } from '../shared/transfer'
-import { decodeTextDocument, encodeTextDocument, resolveEncoding } from './textCodec'
+import { decodeTextDocument, encodeTextDocument, resolveEncoding, resolveReadEncoding } from './textCodec'
 
 // O_NOFOLLOW があれば symlink を open 時点で弾く。未対応 OS（値が 0）では lstat/fstat identity で補う。
 const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0
@@ -83,11 +83,11 @@ export async function openVerifiedRegularFile(
  */
 export async function readLocalText(path: unknown, encoding?: unknown): Promise<TextDocument> {
   assertLocalPath(path)
-  const textEncoding = resolveEncoding(encoding)
+  const readEncoding = resolveReadEncoding(encoding)
   const handle = await openVerifiedRegularFile(path, fsConstants.O_RDONLY)
   try {
     const data = await handle.readFile()
-    return decodeTextDocument(new Uint8Array(data), textEncoding)
+    return decodeTextDocument(new Uint8Array(data), readEncoding)
   } finally {
     await handle.close().catch(() => undefined)
   }
@@ -158,6 +158,13 @@ export async function chooseApplicationAndOpen(event: IpcMainInvokeEvent, filePa
   assertLocalPath(filePath)
   const parent = BrowserWindow.fromWebContents(event.sender)
   const options: OpenDialogOptions = { title: 'Choose Application', properties: ['openFile'] }
+  // macOS は既定で /Applications を開き、.app バンドル（VS Code 等）をすぐ選べるようにする。
+  // filter で .app のみに絞るが、.app は OS が単一ファイル扱いするため内部実行ファイルは選ばれない。
+  // Windows / Linux は従来どおり（defaultPath / filter なし）。
+  if (process.platform === 'darwin') {
+    options.defaultPath = '/Applications'
+    options.filters = [{ name: 'Applications', extensions: ['app'] }]
+  }
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
   if (result.canceled || result.filePaths.length === 0) return null
   const applicationPath = result.filePaths[0]
