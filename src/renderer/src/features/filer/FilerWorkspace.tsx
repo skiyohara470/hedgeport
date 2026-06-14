@@ -1,18 +1,69 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type MouseEvent,
-  type PointerEvent,
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 
+import {
+  TEXT_ENCODINGS,
+  type BatchOperationResult,
+  type ClipboardEntry,
+  type ExternalEditSession,
+  type OpenMode,
+  type TextEncoding,
+} from '../../../../shared/transfer'
 import type { StorageEntry } from '../../../../shared/storage'
 import { ConnectionManager } from '../connection/ConnectionManager'
 import type { ConnectionTarget } from '../connection/connectionTypes'
+import {
+  describeActions,
+  isTypingTarget,
+  matchesShortcut,
+  summarizeSelection,
+  type ActionContext,
+  type FileActionDescriptor,
+  type FileActionId,
+} from './fileActions'
+
+/** pane action toolbar に出すアクション（順序）。 */
+const TOOLBAR_ACTIONS: Record<PaneKind, FileActionId[]> = {
+  remote: ['download-local', 'copy', 'paste', 'rename', 'delete', 'new-folder'],
+  local: ['upload', 'copy', 'paste', 'rename', 'delete', 'new-folder'],
+}
+
+/** アクション id → toolbar アイコン名。 */
+const ACTION_ICON: Partial<Record<FileActionId, IconProps['name']>> = {
+  'download-local': 'download',
+  upload: 'upload',
+  copy: 'copy',
+  paste: 'paste',
+  rename: 'rename',
+  delete: 'trash',
+  'new-folder': 'folder-plus',
+}
 import { emptySelection, selectEntry } from './selectionModel'
 import { activateTab, closeTab, openTab, type TabsState } from './tabsModel'
+
+/** ペイン種別。 */
+type PaneKind = 'remote' | 'local'
+
+/** ファイル操作のアクション実行ハンドラ（選択全体に作用する）。 */
+type ActionHandler = (id: FileActionId, selection: StorageEntry[]) => void
+
+/** 開き方選択ハンドラ。 */
+type OpenWithHandler = (mode: OpenMode, entry: StorageEntry) => void
+
+/** Open… で選べる開き方の一覧。 */
+const OPEN_MODE_ITEMS: { mode: OpenMode; label: string }[] = [
+  { mode: 'preview', label: 'Preview' },
+  { mode: 'built-in', label: 'Built-in Editor' },
+  { mode: 'system-default', label: 'System Default App' },
+  { mode: 'choose-app', label: 'Choose Application…' },
+]
+
+/**
+ * 開き方が現在の pane で使えるか。
+ * remote の System Default / Choose Application は外部編集セッション（temp 経由）で対応する。
+ */
+function openModeEnabled(_mode: OpenMode, _paneKind: PaneKind): boolean {
+  return true
+}
 
 interface FilerWorkspaceProps {
   target: ConnectionTarget
@@ -35,12 +86,19 @@ interface IconProps {
     | 'forward'
     | 'folder'
     | 'file'
+    | 'download'
+    | 'upload'
+    | 'copy'
+    | 'paste'
+    | 'trash'
+    | 'folder-plus'
+    | 'rename'
 }
 
-  /**
-   * ワークスペース内で使う共通アイコン。
-   * 見た目は name ごとの path 定義だけに寄せて呼び出し側を簡潔にする。
-   */
+/**
+ * ワークスペース内で使う共通アイコン。
+ * 見た目は name ごとの path 定義だけに寄せて呼び出し側を簡潔にする。
+ */
 function Icon({ name }: IconProps) {
   const paths = {
     columns: <path d="M4 5h16v14H4zM12 5v14" />,
@@ -54,6 +112,13 @@ function Icon({ name }: IconProps) {
     forward: <path d="m10 6 6 6-6 6M4 12h12" />,
     folder: <path d="M3 6.5h7l2 2h9v9.5H3z" />,
     file: <path d="M6 3h8l4 4v14H6zM14 3v5h5" />,
+    download: <path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14" />,
+    upload: <path d="M12 20V10m0 0 4 4m-4-4-4 4M5 5h14" />,
+    copy: <path d="M9 9h10v11H9zM5 15V4h10" />,
+    paste: <path d="M9 4h6v3H9zM7 5H5v15h14V5h-2M9 12h6M9 16h6" />,
+    trash: <path d="M5 7h14M10 7V4h4v3M6 7l1 13h10l1-13" />,
+    'folder-plus': <path d="M3 6.5h7l2 2h9v9.5H3zM12 12v5M9.5 14.5h5" />,
+    rename: <path d="m4 20 1-4L16 5l3 3L8 19zM14 7l3 3" />,
   }
 
   return (
@@ -121,15 +186,41 @@ export function calculateSplitRatio(clientX: number, left: number, width: number
 
 type SortKey = 'name' | 'size' | 'modifiedAt'
 type SortDirection = 'asc' | 'desc'
-type PaneKind = 'remote' | 'local'
 
 interface ContextMenuState {
   x: number
   y: number
-  entry: StorageEntry
+  // entry が null のときは空白領域のメニュー（New Folder など）。
+  entry: StorageEntry | null
 }
 
-function ariaSortValue(key: SortKey, sortKey: SortKey, sortDirection: SortDirection): 'none' | 'ascending' | 'descending' {
+/**
+ * ディレクトリ作成 / リネーム共通の入力モーダル状態。
+ */
+interface NameDialogState {
+  id: number
+  title: string
+  label: string
+  value: string
+  submitLabel: string
+  busy: boolean
+  error: string | null
+  submit: (name: string) => Promise<void>
+}
+
+/**
+ * パス（複数なら改行区切り）をクリップボードへコピーする。
+ * クリップボード API が無い環境では黙って何もしない。
+ */
+function copyToClipboard(text: string): void {
+  void navigator.clipboard?.writeText(text)
+}
+
+function ariaSortValue(
+  key: SortKey,
+  sortKey: SortKey,
+  sortDirection: SortDirection
+): 'none' | 'ascending' | 'descending' {
   if (key !== sortKey) return 'none'
   return sortDirection === 'asc' ? 'ascending' : 'descending'
 }
@@ -168,45 +259,44 @@ function sortEntries(entries: StorageEntry[], key: SortKey, direction: SortDirec
 }
 
 /**
- * 行コンテキストメニューの表示項目を組み立てる。
- * 現段階では文言と disabled 状態だけを持つプレースホルダ実装。
- */
-function contextMenuItems(entry: StorageEntry, paneKind: PaneKind): Array<{ label: string; disabled?: boolean }> {
-  const openLabel = entry.type === 'directory' ? 'Open' : 'Open'
-  const transferLabel = paneKind === 'remote' ? 'Download' : 'Upload'
-
-  return [
-    { label: openLabel, disabled: entry.type === 'directory' ? false : false },
-    { label: `${transferLabel} ${entry.type === 'directory' ? 'folder' : 'file'}` },
-    { label: 'Copy path' },
-    { label: 'Rename' },
-    { label: 'Delete' },
-    { label: 'Properties' },
-  ]
-}
-
-/**
  * 単一ペイン分のファイル一覧テーブル。
- * 検索、ソート、複数選択、簡易コンテキストメニューをローカル state で持つ。
+ * 検索、ソート、複数選択、コンテキストメニューをローカル state で持つ。
+ * メニュー項目は呼び出し側（ペイン）が `menuItemsFor` で組み立てて渡す。
  */
 function FileTable({
   entries,
   directoryKey,
   paneKind,
+  busy = false,
+  canDownloadToLocal = false,
+  hasClipboard = false,
+  keyboardActive = false,
   s3FoldersHaveNoModifiedDate = false,
   onOpenDirectory,
+  onFocusPane,
+  onAction = () => undefined,
+  onOpenWith = () => undefined,
 }: {
   entries: StorageEntry[]
   directoryKey: string
   paneKind: PaneKind
+  busy?: boolean
+  canDownloadToLocal?: boolean
+  hasClipboard?: boolean
+  keyboardActive?: boolean
   s3FoldersHaveNoModifiedDate?: boolean
   onOpenDirectory: (path: string) => void
+  onFocusPane?: () => void
+  onAction?: ActionHandler
+  onOpenWith?: OpenWithHandler
 }) {
   const [selection, setSelection] = useState(emptySelection)
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  // Open… の開き方選択モーダル対象（単一ファイル）。
+  const [openModeFor, setOpenModeFor] = useState<StorageEntry | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const normalizedQuery = query.trim().toLowerCase()
   const filteredEntries = useMemo(
@@ -219,13 +309,41 @@ function FileTable({
   )
   const orderedPaths = visibleEntries.map((entry) => entry.path)
 
+  // 現在の選択（エントリ実体）。toolbar / menu / shortcut の作用対象。
+  const selectionEntries = useMemo(
+    () => entries.filter((entry) => selection.selectedPaths.has(entry.path)),
+    [entries, selection.selectedPaths]
+  )
+  const actionContext: ActionContext = { paneKind, selection: selectionEntries, busy, canDownloadToLocal, hasClipboard }
+  const actions = describeActions(actionContext)
+
+  /**
+   * アクションを実行する。ディレクトリの Open はペイン内移動、それ以外は親ハンドラへ委譲。
+   */
+  const runAction = (id: FileActionId): void => {
+    if (id === 'open' && selectionEntries.length === 1 && selectionEntries[0].type === 'directory') {
+      onOpenDirectory(selectionEntries[0].path)
+      return
+    }
+    // Open… は開き方選択モーダルを開く（単一ファイルのみ）。
+    if (id === 'open-with') {
+      if (selectionEntries.length === 1 && selectionEntries[0].type === 'file') setOpenModeFor(selectionEntries[0])
+      return
+    }
+    onAction(id, selectionEntries)
+  }
+
   useEffect(() => {
     setSelection(emptySelection())
     setQuery('')
     setSortKey('name')
     setSortDirection('asc')
     setContextMenu(null)
+    setOpenModeFor(null)
   }, [directoryKey])
+
+  const openAction = actions.find((action) => action.id === 'open')
+  const openWithAction = actions.find((action) => action.id === 'open-with')
 
   useEffect(() => {
     const checkbox = selectAllRef.current
@@ -234,6 +352,26 @@ function FileTable({
     checkbox.checked = visibleEntries.length > 0 && selectedCount === visibleEntries.length
     checkbox.indeterminate = selectedCount > 0 && selectedCount < visibleEntries.length
   }, [selection.selectedPaths, visibleEntries])
+
+  // このペインがフォーカスされている間だけ、ショートカットをアクション定義へ対応付けて発火する。
+  useEffect(() => {
+    if (!keyboardActive) return
+    const handler = (event: globalThis.KeyboardEvent): void => {
+      if (isTypingTarget(event.target)) return
+      for (const action of actions) {
+        if (!action.shortcut || !action.enabled) continue
+        if (matchesShortcut(event, action.shortcut)) {
+          event.preventDefault()
+          runAction(action.id)
+          return
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+    // actions / selectionEntries は描画ごとに新規だが、購読し直して最新を反映する。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyboardActive, actions, selectionEntries])
 
   /**
    * 行クリックを selectionModel へ委譲して次の選択状態を作る。
@@ -295,141 +433,232 @@ function FileTable({
     }
   }, [contextMenu])
 
+  const toolbarActions = TOOLBAR_ACTIONS[paneKind]
+    .map((id) => actions.find((action) => action.id === id))
+    .filter((action): action is FileActionDescriptor => Boolean(action))
+  const menuActions = contextMenu?.entry
+    ? actions.filter((action) => action.id !== 'open-folder')
+    : actions.filter((action) => action.id === 'new-folder' || action.id === 'paste' || action.id === 'open-folder')
+
   return (
-    <div className="file-table-shell" onContextMenu={(event) => event.preventDefault()}>
+    <div
+      className="file-table-shell"
+      onMouseDownCapture={() => onFocusPane?.()}
+      onContextMenu={(event) => {
+        // 行ハンドラが stopPropagation するため、ここに来るのは空白領域の右クリック。
+        event.preventDefault()
+        onFocusPane?.()
+        setContextMenu({ x: event.clientX, y: event.clientY, entry: null })
+      }}
+    >
       <div className="table-toolbar">
         <label className="search-box">
-          <span>File search</span>
           <input
+            aria-label="Search files"
             value={query}
-            placeholder="Search file names"
+            placeholder="Search files"
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
+        <div className="pane-action-toolbar" role="toolbar" aria-label={`${paneKind} actions`}>
+          {/* Open（eye 本体）＋ ▼（Open… 開き方選択）の split button。 */}
+          <span className="split-button">
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Open"
+              title="Open (Enter)"
+              disabled={!openAction?.enabled}
+              onClick={() => runAction('open')}
+            >
+              <Icon name="eye" />
+            </button>
+            <button
+              className="split-button-caret"
+              type="button"
+              aria-label="Open with…"
+              aria-haspopup="menu"
+              aria-expanded={openModeFor !== null}
+              title={openWithAction?.shortcutLabel ? `Open… (${openWithAction.shortcutLabel})` : 'Open…'}
+              disabled={!openWithAction?.enabled}
+              onClick={() => runAction('open-with')}
+            >
+              ▾
+            </button>
+          </span>
+          {toolbarActions.map((action) => (
+            <button
+              key={action.id}
+              className="icon-button"
+              type="button"
+              aria-label={action.label}
+              title={action.shortcutLabel ? `${action.label} (${action.shortcutLabel})` : action.label}
+              disabled={!action.enabled}
+              onClick={() => runAction(action.id)}
+            >
+              <Icon name={ACTION_ICON[action.id] ?? 'file'} />
+            </button>
+          ))}
+        </div>
       </div>
-      {visibleEntries.length === 0 ? (
-        <p className="pane-message">No files match this search.</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th className="checkbox-cell">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  aria-label="Select all"
-                  onChange={toggleSelectAll}
-                />
-              </th>
-              <th aria-sort={ariaSortValue('name', sortKey, sortDirection)}>
-                <button className="sort-button" type="button" onClick={() => toggleSort('name')}>
-                  Name
-                  <span aria-hidden="true">
-                    {sortKey === 'name' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
-                  </span>
-                </button>
-              </th>
-              <th aria-sort={ariaSortValue('size', sortKey, sortDirection)}>
-                <button className="sort-button" type="button" onClick={() => toggleSort('size')}>
-                  Size
-                  <span aria-hidden="true">
-                    {sortKey === 'size' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
-                  </span>
-                </button>
-              </th>
-              <th aria-sort={ariaSortValue('modifiedAt', sortKey, sortDirection)}>
-                <button
-                  className="sort-button"
-                  type="button"
-                  onClick={() => toggleSort('modifiedAt')}
-                >
-                  Modified
-                  <span aria-hidden="true">
-                    {sortKey === 'modifiedAt' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
-                  </span>
-                </button>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleEntries.map((entry) => {
-              const selected = selection.selectedPaths.has(entry.path)
-              return (
-                <tr
-                  key={entry.path}
-                  className={[
-                    entry.type === 'directory' ? 'directory-row' : '',
-                    selected ? 'selected-row' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  aria-selected={selected}
-                  title={entry.type === 'directory' ? 'Double-click to open' : undefined}
-                  onClick={(event) => select(event, entry.path)}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    select(event, entry.path)
-                    setContextMenu({ x: event.clientX, y: event.clientY, entry })
-                  }}
-                  onDoubleClick={
-                    entry.type === 'directory' ? () => onOpenDirectory(entry.path) : undefined
-                  }
-                >
-                  <td className="checkbox-cell">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${entry.name}`}
-                      checked={selected}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => {
-                        event.stopPropagation()
-                        setSelection((current) =>
-                          selectEntry(current, orderedPaths, entry.path, {
-                            toggle: true,
-                            range: false,
-                          })
-                        )
-                      }}
-                    />
-                  </td>
-                  <td>
-                    <span className="entry-name">
-                      <span
-                        className={entry.type === 'directory' ? 'entry-icon folder' : 'entry-icon file'}
-                      >
-                        <Icon name={entry.type === 'directory' ? 'folder' : 'file'} />
-                      </span>
-                      <span>{entry.name}</span>
+      <div className="file-table-scroll">
+        {visibleEntries.length === 0 ? (
+          <p className="pane-message">{normalizedQuery ? 'No files match this search.' : 'This directory is empty.'}</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th className="checkbox-cell">
+                  <input ref={selectAllRef} type="checkbox" aria-label="Select all" onChange={toggleSelectAll} />
+                </th>
+                <th aria-sort={ariaSortValue('name', sortKey, sortDirection)}>
+                  <button className="sort-button" type="button" onClick={() => toggleSort('name')}>
+                    Name
+                    <span aria-hidden="true">{sortKey === 'name' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}</span>
+                  </button>
+                </th>
+                <th aria-sort={ariaSortValue('size', sortKey, sortDirection)}>
+                  <button className="sort-button" type="button" onClick={() => toggleSort('size')}>
+                    Size
+                    <span aria-hidden="true">{sortKey === 'size' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}</span>
+                  </button>
+                </th>
+                <th aria-sort={ariaSortValue('modifiedAt', sortKey, sortDirection)}>
+                  <button className="sort-button" type="button" onClick={() => toggleSort('modifiedAt')}>
+                    Modified
+                    <span aria-hidden="true">
+                      {sortKey === 'modifiedAt' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
                     </span>
-                  </td>
-                  <td>{formatSize(entry.size)}</td>
-                  <td
-                    title={
-                      s3FoldersHaveNoModifiedDate && entry.type === 'directory'
-                        ? 'S3 folders have no modified date.'
-                        : undefined
-                    }
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleEntries.map((entry) => {
+                const selected = selection.selectedPaths.has(entry.path)
+                return (
+                  <tr
+                    key={entry.path}
+                    className={[entry.type === 'directory' ? 'directory-row' : '', selected ? 'selected-row' : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    aria-selected={selected}
+                    title={entry.type === 'directory' ? 'Double-click to open' : undefined}
+                    onClick={(event) => select(event, entry.path)}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      // 空白領域メニューを開かないよう shell ハンドラへの伝播を止める。
+                      event.stopPropagation()
+                      onFocusPane?.()
+                      // 右クリック対象が選択内なら複数選択を維持、選択外ならその1件へ置換。
+                      if (!selection.selectedPaths.has(entry.path)) {
+                        setSelection((current) =>
+                          selectEntry(current, orderedPaths, entry.path, { toggle: false, range: false })
+                        )
+                      }
+                      setContextMenu({ x: event.clientX, y: event.clientY, entry })
+                    }}
+                    onDoubleClick={entry.type === 'directory' ? () => onOpenDirectory(entry.path) : undefined}
                   >
-                    {formatModifiedAt(entry.modifiedAt)}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
+                    <td className="checkbox-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${entry.name}`}
+                        checked={selected}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => {
+                          event.stopPropagation()
+                          setSelection((current) =>
+                            selectEntry(current, orderedPaths, entry.path, {
+                              toggle: true,
+                              range: false,
+                            })
+                          )
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <span className="entry-name">
+                        <span className={entry.type === 'directory' ? 'entry-icon folder' : 'entry-icon file'}>
+                          <Icon name={entry.type === 'directory' ? 'folder' : 'file'} />
+                        </span>
+                        <span>{entry.name}</span>
+                      </span>
+                    </td>
+                    <td>{formatSize(entry.size)}</td>
+                    <td
+                      title={
+                        s3FoldersHaveNoModifiedDate && entry.type === 'directory'
+                          ? 'S3 folders have no modified date.'
+                          : undefined
+                      }
+                    >
+                      {formatModifiedAt(entry.modifiedAt)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
       {contextMenu && (
         <div
           className="context-menu"
           role="menu"
-          aria-label={`${contextMenu.entry.name} actions`}
+          aria-label={contextMenu.entry ? `${contextMenu.entry.name} actions` : 'Directory actions'}
           style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
         >
-          {contextMenuItems(contextMenu.entry, paneKind).map((item) => (
-            <button key={item.label} type="button" role="menuitem" disabled={item.disabled}>
-              {item.label}
+          {menuActions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              role="menuitem"
+              disabled={!action.enabled}
+              onClick={() => {
+                runAction(action.id)
+                setContextMenu(null)
+              }}
+            >
+              <span>{action.label}</span>
+              {action.shortcutLabel && <span className="menu-shortcut">{action.shortcutLabel}</span>}
             </button>
           ))}
+        </div>
+      )}
+      {openModeFor && (
+        <div
+          className="editor-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Open ${openModeFor.name} with`}
+          onClick={() => setOpenModeFor(null)}
+        >
+          <div className="open-mode-modal" role="menu" onClick={(event) => event.stopPropagation()}>
+            <header className="editor-header">
+              <h2>Open “{openModeFor.name}”</h2>
+            </header>
+            {OPEN_MODE_ITEMS.map((item) => {
+              const enabled = openModeEnabled(item.mode, paneKind)
+              return (
+                <button
+                  key={item.mode}
+                  type="button"
+                  role="menuitem"
+                  disabled={!enabled}
+                  title={enabled ? undefined : 'External editing will be added next'}
+                  onClick={() => {
+                    const entry = openModeFor
+                    setOpenModeFor(null)
+                    onOpenWith(item.mode, entry)
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {!enabled && <span className="menu-shortcut">soon</span>}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -439,8 +668,31 @@ function FileTable({
 /**
  * リモートストレージ側のファイルペイン。
  * パス移動と戻る/進む履歴を持ち、target 切替時にルートから再ロードする。
+ * ファイル操作（開く / ダウンロード / 削除）は親から渡されたハンドラへ委譲する。
  */
-export function RemoteFilePane({ target }: { target: ConnectionTarget }) {
+export function RemoteFilePane({
+  target,
+  onAction = () => undefined,
+  onCurrentPathChange,
+  onFocusPane,
+  onOpenWith,
+  canDownloadToLocal = false,
+  hasClipboard = false,
+  busy = false,
+  keyboardActive = false,
+  reloadToken = 0,
+}: {
+  target: ConnectionTarget
+  onAction?: ActionHandler
+  onCurrentPathChange?: (path: string) => void
+  onFocusPane?: () => void
+  onOpenWith?: OpenWithHandler
+  canDownloadToLocal?: boolean
+  hasClipboard?: boolean
+  busy?: boolean
+  keyboardActive?: boolean
+  reloadToken?: number
+}) {
   const [path, setPath] = useState('/')
   const [entries, setEntries] = useState<StorageEntry[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -474,6 +726,8 @@ export function RemoteFilePane({ target }: { target: ConnectionTarget }) {
       pathRef.current = nextPath
       setPath(nextPath)
       setEntries(nextEntries)
+      // 親が転送先（アップロード先）を決められるよう、現在のリモートディレクトリを伝える。
+      onCurrentPathChange?.(nextPath)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not list this directory.')
     } finally {
@@ -486,7 +740,16 @@ export function RemoteFilePane({ target }: { target: ConnectionTarget }) {
     setForwardStack([])
     pathRef.current = '/'
     void loadDirectory('/', 'replace')
-  }, [target])
+    // target.id だけに依存させる。lastLocalPath 保存などで target 参照が変わっても
+    // リモートをルートへ戻さない（左右ペインを独立させる）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target.id])
+
+  // 親が転送・削除完了を通知したら、現在ディレクトリを取り直して一覧を最新化する。
+  useEffect(() => {
+    if (reloadToken > 0) void loadDirectory(pathRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken])
 
   const parent = parentPath(path)
 
@@ -567,15 +830,21 @@ export function RemoteFilePane({ target }: { target: ConnectionTarget }) {
         </div>
       ) : isLoading ? (
         <p className="pane-message">Loading remote files...</p>
-      ) : entries.length === 0 ? (
-        <p className="pane-message">This directory is empty.</p>
       ) : (
+        // 空ディレクトリでも FileTable を描画する（空白右クリック New Folder / ショートカットを使えるように）。
         <FileTable
           entries={entries}
           directoryKey={path}
           paneKind="remote"
+          busy={busy}
+          canDownloadToLocal={canDownloadToLocal}
+          hasClipboard={hasClipboard}
+          keyboardActive={keyboardActive}
           s3FoldersHaveNoModifiedDate={target.kind === 's3'}
           onOpenDirectory={(entryPath) => void loadDirectory(entryPath, 'push')}
+          onFocusPane={onFocusPane}
+          onAction={onAction}
+          onOpenWith={onOpenWith}
         />
       )}
     </section>
@@ -589,9 +858,23 @@ export function RemoteFilePane({ target }: { target: ConnectionTarget }) {
 function LocalFilePane({
   target,
   onRememberPath,
+  onAction = () => undefined,
+  onOpenWith,
+  onFocusPane,
+  hasClipboard = false,
+  busy = false,
+  keyboardActive = false,
+  reloadToken = 0,
 }: {
   target: ConnectionTarget
   onRememberPath: (path: string) => void
+  onAction?: ActionHandler
+  onOpenWith?: OpenWithHandler
+  onFocusPane?: () => void
+  hasClipboard?: boolean
+  busy?: boolean
+  keyboardActive?: boolean
+  reloadToken?: number
 }) {
   const [directory, setDirectory] = useState<LocalDirectory | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -635,6 +918,12 @@ function LocalFilePane({
     pathRef.current = target.lastLocalPath ?? '/'
     void loadDirectory(target.lastLocalPath, 'replace')
   }, [target.id])
+
+  // ダウンロード完了などで親が通知したら、現在ディレクトリを取り直す。
+  useEffect(() => {
+    if (reloadToken > 0) void loadDirectory(pathRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken])
 
   const currentPath = directory?.path ?? pathRef.current
   const parent = parentPath(currentPath)
@@ -716,14 +1005,19 @@ function LocalFilePane({
         </div>
       ) : directory === null ? (
         <p className="pane-message">Loading local files...</p>
-      ) : directory.entries.length === 0 ? (
-        <p className="pane-message">This directory is empty.</p>
       ) : (
+        // 空ディレクトリでも FileTable を描画する（空白右クリック New Folder / ショートカットを使えるように）。
         <FileTable
           entries={directory.entries}
           directoryKey={directory.path}
           paneKind="local"
+          busy={busy}
+          hasClipboard={hasClipboard}
+          keyboardActive={keyboardActive}
           onOpenDirectory={(entryPath) => void loadDirectory(entryPath, 'push')}
+          onFocusPane={onFocusPane}
+          onAction={onAction}
+          onOpenWith={onOpenWith}
         />
       )}
     </section>
@@ -747,13 +1041,7 @@ function TabConnectionSelect({
   return (
     <section className="tab-connection-select">
       <div className="tab-connection-card">
-        <ConnectionManager
-          targets={targets}
-          onSelect={onSelect}
-          onSave={onSave}
-          onDelete={onDelete}
-          variant="tab"
-        />
+        <ConnectionManager targets={targets} onSelect={onSelect} onSave={onSave} onDelete={onDelete} variant="tab" />
       </div>
     </section>
   )
@@ -763,13 +1051,7 @@ function TabConnectionSelect({
  * 接続先ごとのタブ、リモートペイン、任意のローカルペインをまとめる作業画面。
  * タブごとに接続先を保持し、接続編集結果を各タブへ反映する。
  */
-export function FilerWorkspace({
-  target,
-  targets,
-  onSaveTarget,
-  onDeleteTarget,
-  onDisconnect,
-}: FilerWorkspaceProps) {
+export function FilerWorkspace({ target, targets, onSaveTarget, onDeleteTarget, onDisconnect }: FilerWorkspaceProps) {
   const [tabs, setTabs] = useState<TabsState>({
     tabs: [{ id: 'root', title: target.name }],
     activeId: 'root',
@@ -781,6 +1063,43 @@ export function FilerWorkspace({
   const [splitRatio, setSplitRatio] = useState(50)
   const paneGridRef = useRef<HTMLDivElement>(null)
   const nextTabNumber = useMemo(() => tabs.tabs.length + 1, [tabs.tabs.length])
+  // 転送先決定のため、各ペインの現在ディレクトリを親で保持する。
+  const [remoteDir, setRemoteDir] = useState('/')
+  const [localDir, setLocalDir] = useState<string | null>(target.lastLocalPath ?? null)
+  // 転送・削除完了時に該当ペインへ再ロードを促すためのトークン。
+  const [remoteReloadToken, setRemoteReloadToken] = useState(0)
+  const [localReloadToken, setLocalReloadToken] = useState(0)
+  const [transfer, setTransfer] = useState<{ busy: boolean; message: string | null; error: string | null }>({
+    busy: false,
+    message: null,
+    error: null,
+  })
+  const [editor, setEditor] = useState<{
+    source: PaneKind
+    entry: StorageEntry
+    status: 'loading' | 'ready' | 'saving' | 'error'
+    content: string
+    error: string | null
+    encoding: TextEncoding
+    bom: boolean
+    dirty: boolean
+    readOnly: boolean
+  } | null>(null)
+  // キーボードショートカットの対象ペイン。remote は常に表示されるため既定は remote。
+  const [focusedPane, setFocusedPane] = useState<PaneKind>('remote')
+  // アプリ内クリップボード。tab 切替後も保持し、接続設定スナップショットを含める。
+  const [clipboard, setClipboard] = useState<{
+    source: { kind: PaneKind; target: ConnectionTarget | null }
+    entries: ClipboardEntry[]
+  } | null>(null)
+  // リモート外部編集セッション。明示的に Upload / Discard するまで保持する（プロセス終了で消さない）。
+  const [externalSessions, setExternalSessions] = useState<
+    { session: ExternalEditSession; status: 'open' | 'uploading' | 'uploaded' | 'error'; error: string | null }[]
+  >([])
+  // ディレクトリ作成 / リネーム共通の入力モーダル。submit に実処理を持たせる。
+  // id は「この dialog インスタンス」を識別し、tab 切替後に開き直した別 dialog へ旧結果を注入しないために使う。
+  const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null)
+  const nameDialogSeq = useRef(0)
 
   /**
    * 接続未選択の新規タブを開く。
@@ -825,13 +1144,697 @@ export function FilerWorkspace({
   }
 
   const activeTarget = tabs.activeId ? tabTargets[tabs.activeId] : null
+
+  // アクティブタブの接続先が変わったら、ペイン位置と転送状態をリセットする。
+  useEffect(() => {
+    setRemoteDir('/')
+    setLocalDir(activeTarget?.lastLocalPath ?? null)
+    setTransfer({ busy: false, message: null, error: null })
+    setEditor(null)
+    setNameDialog(null)
+    setFocusedPane('remote')
+  }, [activeTarget?.id])
+
+  // 非同期操作の完了時に、その間にタブ / 接続先が切り替わっていないか判定するための現在スコープ。
+  const activeScopeRef = useRef<{ tabId: string | null; targetId: string | null }>({
+    tabId: tabs.activeId,
+    targetId: activeTarget?.id ?? null,
+  })
+  useEffect(() => {
+    activeScopeRef.current = { tabId: tabs.activeId, targetId: activeTarget?.id ?? null }
+  })
+
+  // 外部アプリから戻った（window focus）タイミングで dirty を取り直す。
+  useEffect(() => {
+    const onFocus = (): void => {
+      void window.hedgeport
+        .listExternalSessions()
+        .then((list) =>
+          setExternalSessions((current) =>
+            list.map((session) => {
+              const prev = current.find((item) => item.session.id === session.id)
+              return { session, status: prev?.status ?? 'open', error: prev?.error ?? null }
+            })
+          )
+        )
+        .catch(() => undefined)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
+
   /**
-   * ローカルペインの現在位置を接続設定へ覚えさせる。
+   * 操作開始時点のタブ / 接続先を記録する。
+   */
+  const captureScope = (): { tabId: string | null; targetId: string | null } => ({
+    tabId: tabs.activeId,
+    targetId: activeTarget?.id ?? null,
+  })
+
+  /**
+   * 操作開始時のスコープが、完了時点でもまだアクティブか判定する。
+   * 別タブ / 別接続先へ切り替わった後の reload や status 誤反映を防ぐ。
+   */
+  const isCurrentScope = (scope: { tabId: string | null; targetId: string | null }): boolean =>
+    activeScopeRef.current.tabId === scope.tabId && activeScopeRef.current.targetId === scope.targetId
+
+  /**
+   * ローカルペインの現在位置を覚え、接続設定にも反映する。
+   * 転送先（ダウンロード先）決定に使うため localDir も同期する。
    */
   const rememberLocalPath = (path: string): void => {
+    setLocalDir(path)
     if (!activeTarget || activeTarget.lastLocalPath === path) return
     void saveTarget({ ...activeTarget, lastLocalPath: path })
   }
+
+  /**
+   * BatchOperationResult を status bar に集計表示する共通ランナー。
+   * 成功があれば reload を呼び、部分失敗は件数と先頭メッセージを表示する。
+   *
+   * @param pending 実行中文言
+   * @param doneNoun 完了時の名詞（例: 'Downloaded'）
+   * @param action バッチ本体
+   * @param onSuccessReload 1 件でも成功したら呼ぶ reload
+   * @param presetScope ダイアログ待機後など、事前固定したスコープ
+   */
+  const runBatch = async (
+    pending: string,
+    doneNoun: string,
+    action: () => Promise<BatchOperationResult>,
+    onSuccessReload?: () => void,
+    presetScope?: { tabId: string | null; targetId: string | null }
+  ): Promise<void> => {
+    const scope = presetScope ?? captureScope()
+    setTransfer({ busy: true, message: pending, error: null })
+    try {
+      const result = await action()
+      if (!isCurrentScope(scope)) return
+      if (result.succeeded > 0) onSuccessReload?.()
+      if (result.failures.length === 0) {
+        setTransfer({ busy: false, message: `${doneNoun} ${result.succeeded}`, error: null })
+      } else {
+        setTransfer({
+          busy: false,
+          message: null,
+          error: `${result.succeeded} succeeded, ${result.failures.length} failed (${result.failures[0].message})`,
+        })
+      }
+    } catch (reason) {
+      if (isCurrentScope(scope)) {
+        setTransfer({
+          busy: false,
+          message: null,
+          error: reason instanceof Error ? reason.message : 'Operation failed.',
+        })
+      }
+    }
+  }
+
+  /**
+   * 選択リモートファイル群をローカルの現在ディレクトリへ一括ダウンロードする。
+   */
+  const handleDownloadToLocal = (selection: StorageEntry[]): void => {
+    if (!activeTarget || selection.length === 0) return
+    if (!showLocalFiles || !localDir) {
+      setTransfer({ busy: false, message: null, error: 'Open the local files pane to choose a download destination.' })
+      return
+    }
+    const target = activeTarget
+    const directory = localDir
+    const paths = selection.map((entry) => entry.path)
+    void runBatch(
+      `Downloading ${paths.length}…`,
+      'Downloaded',
+      () => window.hedgeport.batchDownload(target, paths, directory),
+      () => setLocalReloadToken((value) => value + 1)
+    )
+  }
+
+  /**
+   * 保存先ディレクトリをダイアログで選び、選択ファイル群を一括ダウンロードする（キャンセルは no-op）。
+   */
+  const handleDownloadToChosenDirectory = (selection: StorageEntry[]): void => {
+    if (!activeTarget || selection.length === 0) return
+    const target = activeTarget
+    const scope = captureScope()
+    const paths = selection.map((entry) => entry.path)
+    void (async () => {
+      const directory = await window.hedgeport.pickDirectory()
+      if (!directory || !isCurrentScope(scope)) return
+      await runBatch(
+        `Downloading ${paths.length}…`,
+        'Downloaded',
+        () => window.hedgeport.batchDownload(target, paths, directory),
+        () => {
+          if (showLocalFiles && directory === localDir) setLocalReloadToken((value) => value + 1)
+        },
+        scope
+      )
+    })()
+  }
+
+  /**
+   * 選択ローカルファイル群をリモートの現在ディレクトリへ一括アップロードする。
+   */
+  const handleUpload = (selection: StorageEntry[]): void => {
+    if (!activeTarget || selection.length === 0) return
+    const target = activeTarget
+    const paths = selection.map((entry) => entry.path)
+    void runBatch(
+      `Uploading ${paths.length}…`,
+      'Uploaded',
+      () => window.hedgeport.batchUpload(target, paths, remoteDir),
+      () => setRemoteReloadToken((value) => value + 1)
+    )
+  }
+
+  /**
+   * 選択リモートエントリ群を確認の上で一括削除する（file + directory）。
+   */
+  const handleDeleteRemote = (selection: StorageEntry[]): void => {
+    if (!activeTarget || selection.length === 0) return
+    if (!window.confirm(`Delete ${summarizeSelection(selection)}? This cannot be undone.`)) return
+    const target = activeTarget
+    const items = selection.map((entry) => ({ path: entry.path, type: entry.type }))
+    void runBatch(
+      `Deleting ${items.length}…`,
+      'Deleted',
+      () => window.hedgeport.batchDeleteRemote(target, items),
+      () => setRemoteReloadToken((value) => value + 1)
+    )
+  }
+
+  /**
+   * 選択ローカルエントリ群を確認の上で一括削除する（directory は非再帰）。
+   */
+  const handleDeleteLocal = (selection: StorageEntry[]): void => {
+    if (selection.length === 0) return
+    if (!window.confirm(`Delete ${summarizeSelection(selection)}? This cannot be undone.`)) return
+    const items = selection.map((entry) => ({ path: entry.path, type: entry.type }))
+    void runBatch(
+      `Deleting ${items.length}…`,
+      'Deleted',
+      () => window.hedgeport.batchDeleteLocal(items),
+      () => setLocalReloadToken((value) => value + 1)
+    )
+  }
+
+  /**
+   * 選択（ファイルのみ）をアプリ内クリップボードへ記録する。
+   */
+  const handleCopy = (paneKind: PaneKind, selection: StorageEntry[]): void => {
+    const files = selection.filter((entry) => entry.type === 'file')
+    if (files.length === 0) return
+    setClipboard({
+      source: { kind: paneKind, target: paneKind === 'remote' ? activeTarget : null },
+      entries: files.map((entry) => ({ path: entry.path, name: entry.name, type: entry.type })),
+    })
+    setTransfer({ busy: false, message: `Copied ${files.length}`, error: null })
+  }
+
+  /**
+   * クリップボードの内容を focused ペインの現在ディレクトリへ貼り付ける。
+   */
+  const handlePaste = (destinationKind: PaneKind): void => {
+    if (!clipboard || clipboard.entries.length === 0) return
+    const directory = destinationKind === 'remote' ? remoteDir : localDir
+    if (destinationKind === 'remote' ? !activeTarget : !directory) return
+    void runBatch(
+      `Pasting ${clipboard.entries.length}…`,
+      'Pasted',
+      () =>
+        window.hedgeport.paste({
+          entries: clipboard.entries,
+          source: clipboard.source,
+          destination: {
+            kind: destinationKind,
+            target: destinationKind === 'remote' ? activeTarget : null,
+            directory: directory as string,
+          },
+        }),
+      () => (destinationKind === 'remote' ? setRemoteReloadToken((v) => v + 1) : setLocalReloadToken((v) => v + 1))
+    )
+  }
+
+  /**
+   * 選択のパスを改行区切りでクリップボードへコピーする。
+   */
+  const handleCopyPath = (selection: StorageEntry[]): void => {
+    if (selection.length === 0) return
+    copyToClipboard(selection.map((entry) => entry.path).join('\n'))
+    setTransfer({ busy: false, message: selection.length > 1 ? 'Copied paths' : 'Copied path', error: null })
+  }
+
+  /**
+   * ローカルファイルを OS 既定アプリで開く。
+   */
+  const handleOpenLocal = (entry: StorageEntry): void => {
+    void revealPath(entry.path, true)
+  }
+
+  /**
+   * ローカルパスを Finder/Explorer で表示、または OS 既定アプリで開く。
+   * 失敗（openPath が非空エラー文字列など）は status bar に表示する。
+   *
+   * @param path 対象の絶対パス
+   * @param open true なら openLocalPath（開く）、false なら revealInFolder（表示）
+   */
+  const revealPath = async (path: string, open = false): Promise<void> => {
+    try {
+      if (open) await window.hedgeport.openLocalPath(path)
+      else await window.hedgeport.revealInFolder(path)
+    } catch (reason) {
+      setTransfer({ busy: false, message: null, error: reason instanceof Error ? reason.message : 'Could not open.' })
+    }
+  }
+
+  /**
+   * remote / local のファイルを built-in editor（または preview=readOnly）で開く。
+   *
+   * @param source 'remote'（activeTarget 経由）または 'local'
+   * @param entry 対象ファイル
+   * @param readOnly preview のとき true
+   */
+  const openInEditor = (source: PaneKind, entry: StorageEntry, readOnly: boolean): void => {
+    if (source === 'remote' && !activeTarget) return
+    setEditor({
+      source,
+      entry,
+      status: 'loading',
+      content: '',
+      error: null,
+      encoding: 'utf-8',
+      bom: false,
+      dirty: false,
+      readOnly,
+    })
+    loadEditorContent(source, entry, 'utf-8')
+  }
+
+  /**
+   * 指定文字コードでファイルを読み込み、エディタへ反映する。source に応じ remote/local を使い分ける。
+   * UTF-8 decode 失敗時はモーダルを閉じず、文字コード選択を促すエラーを表示する。
+   */
+  const loadEditorContent = (source: PaneKind, entry: StorageEntry, encoding: TextEncoding): void => {
+    const scope = captureScope()
+    const read =
+      source === 'remote' && activeTarget
+        ? window.hedgeport.readText(activeTarget, entry.path, encoding)
+        : window.hedgeport.readLocalText(entry.path, encoding)
+    read
+      .then((document) =>
+        setEditor((current) =>
+          isCurrentScope(scope) && current && current.entry.path === entry.path
+            ? {
+                ...current,
+                status: 'ready',
+                content: document.text,
+                error: null,
+                encoding: document.encoding,
+                bom: document.bom,
+                dirty: false,
+              }
+            : current
+        )
+      )
+      .catch((reason: unknown) =>
+        setEditor((current) =>
+          isCurrentScope(scope) && current && current.entry.path === entry.path
+            ? {
+                ...current,
+                status: 'error',
+                error: reason instanceof Error ? reason.message : 'Could not open file.',
+                encoding,
+              }
+            : current
+        )
+      )
+  }
+
+  /**
+   * 文字コードを切り替えて再読込する。未編集なら即時、編集済みなら確認後に行う。
+   */
+  const changeEditorEncoding = (encoding: TextEncoding): void => {
+    if (!editor || editor.encoding === encoding) return
+    if (editor.dirty && !window.confirm('Reload with another encoding? Unsaved changes will be lost.')) return
+    setEditor((current) => (current ? { ...current, status: 'loading', error: null, encoding } : current))
+    loadEditorContent(editor.source, editor.entry, encoding)
+  }
+
+  /**
+   * 編集中テキストを現在の文字コードで保存し、成功時はモーダルを閉じて一覧を更新する。
+   */
+  const saveEditor = (): void => {
+    if (!editor || editor.readOnly) return
+    if (editor.source === 'remote' && !activeTarget) return
+    const { source, entry, content, encoding, bom } = editor
+    const target = activeTarget
+    const scope = captureScope()
+    setEditor((current) => (current ? { ...current, status: 'saving', error: null } : current))
+    const write =
+      source === 'remote' && target
+        ? window.hedgeport.writeText(target, entry.path, content, encoding, bom)
+        : window.hedgeport.writeLocalText(entry.path, content, encoding, bom)
+    write
+      .then(() => {
+        // 保存中に別タブ / 別接続先へ切り替わっていたら、現在タブへ reload / status を誤反映しない。
+        if (!isCurrentScope(scope)) return
+        setEditor(null)
+        if (source === 'remote') setRemoteReloadToken((value) => value + 1)
+        else setLocalReloadToken((value) => value + 1)
+        setTransfer({ busy: false, message: `Saved ${entry.name} (${encoding})`, error: null })
+      })
+      .catch((reason: unknown) => {
+        // 旧タブの保存失敗を、新タブで開き直したエディタへ反映しない。
+        if (!isCurrentScope(scope)) return
+        setEditor((current) =>
+          current
+            ? { ...current, status: 'ready', error: reason instanceof Error ? reason.message : 'Could not save file.' }
+            : current
+        )
+      })
+  }
+
+  /**
+   * Open… の開き方選択を pane 別に振り分ける。
+   */
+  const handleOpenWith = (paneKind: PaneKind, mode: OpenMode, entry: StorageEntry): void => {
+    switch (mode) {
+      case 'preview':
+        openInEditor(paneKind, entry, true)
+        break
+      case 'built-in':
+        openInEditor(paneKind, entry, false)
+        break
+      case 'system-default':
+        if (paneKind === 'local') void revealPath(entry.path, true)
+        else void startRemoteExternalEdit(entry, 'system-default')
+        break
+      case 'choose-app':
+        if (paneKind === 'local') {
+          void window.hedgeport.chooseApplication(entry.path).catch((reason: unknown) =>
+            setTransfer({
+              busy: false,
+              message: null,
+              error: reason instanceof Error ? reason.message : 'Could not open.',
+            })
+          )
+        } else {
+          void startRemoteExternalEdit(entry, 'choose-app')
+        }
+        break
+      default:
+        break
+    }
+  }
+
+  /**
+   * リモートファイルを temp へ download して外部アプリで開き、外部編集セッションを開始する。
+   * 同一ファイルの再オープンは main 側で既存セッションを再利用する（id 重複は banner に増やさない）。
+   */
+  const startRemoteExternalEdit = async (entry: StorageEntry, mode: OpenMode): Promise<void> => {
+    if (!activeTarget) return
+    try {
+      const session = await window.hedgeport.startExternalEdit(activeTarget, entry.path, mode)
+      if (!session) return // choose-app キャンセル
+      setExternalSessions((current) => {
+        if (current.some((item) => item.session.id === session.id)) return current
+        return [...current, { session, status: 'open', error: null }]
+      })
+      setTransfer({ busy: false, message: `Editing ${entry.name} externally`, error: null })
+    } catch (reason) {
+      setTransfer({
+        busy: false,
+        message: null,
+        error: reason instanceof Error ? reason.message : 'Could not open externally.',
+      })
+    }
+  }
+
+  /**
+   * 外部編集の変更をリモートへ書き戻す（明示操作。自動 upload しない）。
+   * conflict / エラーはセッション行に表示し、成功後はリモート一覧を更新する。
+   */
+  const uploadExternalSession = (id: string): void => {
+    setExternalSessions((current) =>
+      current.map((item) => (item.session.id === id ? { ...item, status: 'uploading', error: null } : item))
+    )
+    window.hedgeport
+      .uploadExternalEdit(id)
+      .then(() => {
+        // upload 後は dirty=false（main snapshot 更新済み）。
+        setExternalSessions((current) =>
+          current.map((item) =>
+            item.session.id === id
+              ? { ...item, status: 'uploaded', error: null, session: { ...item.session, dirty: false } }
+              : item
+          )
+        )
+        setRemoteReloadToken((value) => value + 1)
+      })
+      .catch((reason: unknown) =>
+        setExternalSessions((current) =>
+          current.map((item) =>
+            item.session.id === id
+              ? { ...item, status: 'error', error: reason instanceof Error ? reason.message : 'Upload failed.' }
+              : item
+          )
+        )
+      )
+  }
+
+  /**
+   * 外部編集を破棄して temp を片付け、banner から外す。
+   */
+  const discardExternalSession = (id: string): void => {
+    void window.hedgeport.discardExternalEdit(id).finally(() => {
+      setExternalSessions((current) => current.filter((item) => item.session.id !== id))
+    })
+  }
+
+  /**
+   * 外部編集の temp ファイルを Finder / Explorer で表示する。
+   */
+  const revealExternalSession = (id: string): void => {
+    void window.hedgeport
+      .revealExternalEdit(id)
+      .catch((reason: unknown) =>
+        setExternalSessions((current) =>
+          current.map((item) =>
+            item.session.id === id
+              ? { ...item, status: 'error', error: reason instanceof Error ? reason.message : 'Could not reveal.' }
+              : item
+          )
+        )
+      )
+  }
+
+  /**
+   * 名前入力モーダルを開く。id を採番し、tab 切替後に開いた別 dialog と区別できるようにする。
+   */
+  const openNameDialog = (config: {
+    title: string
+    label: string
+    value: string
+    submitLabel: string
+    submit: (name: string) => Promise<void>
+  }): void => {
+    nameDialogSeq.current += 1
+    setNameDialog({ ...config, id: nameDialogSeq.current, busy: false, error: null })
+  }
+
+  /**
+   * 名前入力モーダルの送信。submit の例外はモーダル内にエラー表示し、開いたまま再入力できる。
+   * close / error 反映は「同一 dialog インスタンスかつ現スコープ」のときだけ行い、
+   * 旧 tab の失敗を新 tab で開いた別 dialog へ注入しない。
+   */
+  const submitNameDialog = (): void => {
+    if (!nameDialog) return
+    const { id, value, submit } = nameDialog
+    const scope = captureScope()
+    const reflectsCurrentDialog = (current: NameDialogState | null): current is NameDialogState =>
+      current?.id === id && isCurrentScope(scope)
+    setNameDialog((current) => (current && current.id === id ? { ...current, busy: true, error: null } : current))
+    submit(value)
+      .then(() => setNameDialog((current) => (reflectsCurrentDialog(current) ? null : current)))
+      .catch((reason: unknown) =>
+        setNameDialog((current) =>
+          reflectsCurrentDialog(current)
+            ? { ...current, busy: false, error: reason instanceof Error ? reason.message : 'Operation failed.' }
+            : current
+        )
+      )
+  }
+
+  /**
+   * リモートの現在ディレクトリ直下に新規フォルダを作る入力モーダルを開く。
+   */
+  const openNewFolderRemote = (): void => {
+    if (!activeTarget) return
+    const target = activeTarget
+    const parentDir = remoteDir
+    const scope = captureScope()
+    openNameDialog({
+      title: 'New folder',
+      label: 'Folder name',
+      value: '',
+      submitLabel: 'Create',
+      submit: async (name) => {
+        await window.hedgeport.createRemoteDirectory(target, parentDir, name)
+        if (!isCurrentScope(scope)) return
+        setRemoteReloadToken((value) => value + 1)
+        setTransfer({ busy: false, message: `Created ${name}`, error: null })
+      },
+    })
+  }
+
+  /**
+   * ローカルの現在ディレクトリ直下に新規フォルダを作る入力モーダルを開く。
+   */
+  const openNewFolderLocal = (): void => {
+    if (!localDir) {
+      setTransfer({
+        busy: false,
+        message: null,
+        error: 'Open the local files pane to choose where to create a folder.',
+      })
+      return
+    }
+    const parentDir = localDir
+    const scope = captureScope()
+    openNameDialog({
+      title: 'New folder',
+      label: 'Folder name',
+      value: '',
+      submitLabel: 'Create',
+      submit: async (name) => {
+        await window.hedgeport.createLocalDirectory(parentDir, name)
+        if (!isCurrentScope(scope)) return
+        setLocalReloadToken((value) => value + 1)
+        setTransfer({ busy: false, message: `Created ${name}`, error: null })
+      },
+    })
+  }
+
+  /**
+   * リモートエントリの改名モーダルを開く（初期値は現名称）。
+   */
+  const openRenameRemote = (entry: StorageEntry): void => {
+    if (!activeTarget) return
+    const target = activeTarget
+    const scope = captureScope()
+    openNameDialog({
+      title: `Rename ${entry.name}`,
+      label: 'New name',
+      value: entry.name,
+      submitLabel: 'Rename',
+      submit: async (name) => {
+        await window.hedgeport.renameRemote(target, entry.path, name, entry.type)
+        if (!isCurrentScope(scope)) return
+        setRemoteReloadToken((value) => value + 1)
+        setTransfer({ busy: false, message: `Renamed to ${name}`, error: null })
+      },
+    })
+  }
+
+  /**
+   * ローカルエントリの改名モーダルを開く（初期値は現名称）。
+   */
+  const openRenameLocal = (entry: StorageEntry): void => {
+    const scope = captureScope()
+    openNameDialog({
+      title: `Rename ${entry.name}`,
+      label: 'New name',
+      value: entry.name,
+      submitLabel: 'Rename',
+      submit: async (name) => {
+        await window.hedgeport.renameLocal(entry.path, name, entry.type)
+        if (!isCurrentScope(scope)) return
+        setLocalReloadToken((value) => value + 1)
+        setTransfer({ busy: false, message: `Renamed to ${name}`, error: null })
+      },
+    })
+  }
+
+  /**
+   * リモートペインのアクションを各ハンドラへ振り分ける。
+   */
+  const handleRemoteAction: ActionHandler = (id, selection) => {
+    switch (id) {
+      case 'open':
+        // remote file の既定は Built-in Editor。
+        if (selection[0]?.type === 'file') openInEditor('remote', selection[0], false)
+        break
+      case 'download-local':
+        handleDownloadToLocal(selection)
+        break
+      case 'download-dialog':
+        handleDownloadToChosenDirectory(selection)
+        break
+      case 'copy':
+        handleCopy('remote', selection)
+        break
+      case 'paste':
+        handlePaste('remote')
+        break
+      case 'rename':
+        if (selection[0]) openRenameRemote(selection[0])
+        break
+      case 'copy-path':
+        handleCopyPath(selection)
+        break
+      case 'delete':
+        handleDeleteRemote(selection)
+        break
+      case 'new-folder':
+        openNewFolderRemote()
+        break
+      default:
+        break
+    }
+  }
+
+  /**
+   * ローカルペインのアクションを各ハンドラへ振り分ける。
+   */
+  const handleLocalAction: ActionHandler = (id, selection) => {
+    switch (id) {
+      case 'open':
+        if (selection[0]?.type === 'file') handleOpenLocal(selection[0])
+        break
+      case 'upload':
+        handleUpload(selection)
+        break
+      case 'copy':
+        handleCopy('local', selection)
+        break
+      case 'paste':
+        handlePaste('local')
+        break
+      case 'rename':
+        if (selection[0]) openRenameLocal(selection[0])
+        break
+      case 'copy-path':
+        handleCopyPath(selection)
+        break
+      case 'delete':
+        handleDeleteLocal(selection)
+        break
+      case 'new-folder':
+        openNewFolderLocal()
+        break
+      case 'reveal':
+        if (selection[0]) void revealPath(selection[0].path)
+        break
+      case 'open-folder':
+        if (localDir) void revealPath(localDir, true)
+        break
+      default:
+        break
+    }
+  }
+
   /**
    * ポインタ移動で左右ペイン比率を更新する。
    */
@@ -946,15 +1949,6 @@ export function FilerWorkspace({
           >
             <Icon name="columns" />
           </button>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="Open preview"
-            title="Open preview"
-            onClick={() => window.hedgeport.openPreview()}
-          >
-            <Icon name="eye" />
-          </button>
           <span className="toolbar-divider" aria-hidden="true" />
           <button
             className="icon-button"
@@ -985,7 +1979,19 @@ export function FilerWorkspace({
               : undefined
           }
         >
-          <RemoteFilePane key={`${tabs.activeId}-${activeTarget.id}`} target={activeTarget} />
+          <RemoteFilePane
+            key={`${tabs.activeId}-${activeTarget.id}`}
+            target={activeTarget}
+            onAction={handleRemoteAction}
+            onOpenWith={(mode, entry) => handleOpenWith('remote', mode, entry)}
+            onCurrentPathChange={setRemoteDir}
+            onFocusPane={() => setFocusedPane('remote')}
+            canDownloadToLocal={showLocalFiles && Boolean(localDir)}
+            hasClipboard={Boolean(clipboard && clipboard.entries.length > 0)}
+            busy={transfer.busy}
+            keyboardActive={focusedPane === 'remote' && !editor && !nameDialog}
+            reloadToken={remoteReloadToken}
+          />
           {showLocalFiles && (
             <>
               <div
@@ -1001,15 +2007,229 @@ export function FilerWorkspace({
                 onKeyDown={resizeSplitWithKeyboard}
                 onDoubleClick={() => setSplitRatio(50)}
               />
-              {activeTarget && <LocalFilePane target={activeTarget} onRememberPath={rememberLocalPath} />}
+              {activeTarget && (
+                <LocalFilePane
+                  target={activeTarget}
+                  onRememberPath={rememberLocalPath}
+                  onAction={handleLocalAction}
+                  onOpenWith={(mode, entry) => handleOpenWith('local', mode, entry)}
+                  onFocusPane={() => setFocusedPane('local')}
+                  hasClipboard={Boolean(clipboard && clipboard.entries.length > 0)}
+                  busy={transfer.busy}
+                  keyboardActive={focusedPane === 'local' && !editor && !nameDialog}
+                  reloadToken={localReloadToken}
+                />
+              )}
             </>
           )}
         </div>
       )}
 
+      {editor && (
+        <div
+          className="editor-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${editor.readOnly ? 'Preview' : 'Edit'} ${editor.entry.name}`}
+        >
+          <div className="editor-modal">
+            <header className="editor-header">
+              <h2>
+                {editor.readOnly ? 'Preview: ' : ''}
+                {editor.entry.name}
+              </h2>
+              <div className="editor-header-tools">
+                {/* 文字コード select は常設。変更時は未編集なら即再読込、編集済みは確認後。 */}
+                <label className="editor-encoding">
+                  <span>Encoding</span>
+                  <select
+                    aria-label="Encoding"
+                    value={editor.encoding}
+                    disabled={editor.status === 'saving'}
+                    onChange={(event) => changeEditorEncoding(event.target.value as TextEncoding)}
+                  >
+                    {TEXT_ENCODINGS.map((encoding) => (
+                      <option key={encoding} value={encoding}>
+                        {encoding}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {/* BOM は utf-8 のときだけ意味を持つ。読み込み時の有無を保持し、切替は dirty 扱い。 */}
+                {editor.encoding === 'utf-8' && (
+                  <label className="editor-bom">
+                    <input
+                      type="checkbox"
+                      aria-label="UTF-8 BOM"
+                      checked={editor.bom}
+                      disabled={editor.status === 'saving'}
+                      onChange={(event) =>
+                        setEditor((current) =>
+                          current ? { ...current, bom: event.target.checked, dirty: true } : current
+                        )
+                      }
+                    />
+                    <span>BOM</span>
+                  </label>
+                )}
+                <button
+                  className="compact-button"
+                  type="button"
+                  aria-label="Close editor"
+                  onClick={() => setEditor(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </header>
+            {editor.status === 'loading' ? (
+              <p className="pane-message">Loading file…</p>
+            ) : editor.status === 'error' ? (
+              // バイナリ/大容量や UTF-8 不正。文字コード select は header に常設されているので、
+              // ここではエラー文言だけ出し、別 encoding 選択で再読込できる。
+              <p className="pane-message error">{editor.error}</p>
+            ) : (
+              <>
+                {editor.error && <p className="editor-error">{editor.error}</p>}
+                <textarea
+                  className="editor-textarea"
+                  aria-label="File contents"
+                  value={editor.content}
+                  spellCheck={false}
+                  readOnly={editor.readOnly}
+                  disabled={editor.status === 'saving'}
+                  autoFocus
+                  onKeyDown={(event) => {
+                    // editor 固有: Mod+S で保存（preview は不可）、Escape で閉じる。
+                    if (event.key === 's' && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault()
+                      if (!editor.readOnly) saveEditor()
+                    } else if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setEditor(null)
+                    }
+                  }}
+                  onChange={(event) =>
+                    setEditor((current) =>
+                      current ? { ...current, content: event.target.value, dirty: true } : current
+                    )
+                  }
+                />
+                <div className="editor-actions">
+                  <button
+                    className="compact-button"
+                    type="button"
+                    disabled={editor.status === 'saving'}
+                    onClick={() => setEditor(null)}
+                  >
+                    {editor.readOnly ? 'Close' : 'Cancel'}
+                  </button>
+                  {!editor.readOnly && (
+                    <button type="button" disabled={editor.status === 'saving'} onClick={saveEditor}>
+                      {editor.status === 'saving' ? 'Saving…' : 'Save'}
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {nameDialog && (
+        <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={nameDialog.title}>
+          <div className="name-modal">
+            <header className="editor-header">
+              <h2>{nameDialog.title}</h2>
+            </header>
+            <label className="name-field">
+              <span>{nameDialog.label}</span>
+              <input
+                aria-label={nameDialog.label}
+                value={nameDialog.value}
+                autoFocus
+                disabled={nameDialog.busy}
+                onChange={(event) =>
+                  setNameDialog((current) => (current ? { ...current, value: event.target.value } : current))
+                }
+                onKeyDown={(event) => {
+                  // 入力モーダル固有: Enter 実行 / Escape 取消。
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    submitNameDialog()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    setNameDialog(null)
+                  }
+                }}
+              />
+            </label>
+            {nameDialog.error && <p className="editor-error">{nameDialog.error}</p>}
+            <div className="editor-actions">
+              <button
+                className="compact-button"
+                type="button"
+                disabled={nameDialog.busy}
+                onClick={() => setNameDialog(null)}
+              >
+                Cancel
+              </button>
+              <button type="button" disabled={nameDialog.busy} onClick={submitNameDialog}>
+                {nameDialog.busy ? 'Working…' : nameDialog.submitLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {externalSessions.length > 0 && (
+        <section className="external-edit-banner" aria-label="External edit sessions">
+          {externalSessions.map(({ session, status, error }) => (
+            <div key={session.id} className="external-edit-session">
+              <span className="external-edit-name">
+                Editing externally: <strong>{session.name}</strong>
+                <span className={`external-edit-status ${status === 'error' ? 'is-error' : ''}`}>
+                  {error ??
+                    (status === 'uploaded'
+                      ? 'uploaded'
+                      : status === 'uploading'
+                        ? 'uploading…'
+                        : session.dirty
+                          ? 'modified'
+                          : 'clean')}
+                </span>
+              </span>
+              <div className="external-edit-actions">
+                <button
+                  className="compact-button"
+                  type="button"
+                  disabled={status === 'uploading'}
+                  onClick={() => uploadExternalSession(session.id)}
+                >
+                  Upload Changes
+                </button>
+                <button className="compact-button" type="button" onClick={() => revealExternalSession(session.id)}>
+                  Reveal Local Copy
+                </button>
+                <button
+                  className="compact-button"
+                  type="button"
+                  disabled={status === 'uploading'}
+                  onClick={() => discardExternalSession(session.id)}
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
       <footer className="status-bar">
-        <span>Ready</span>
-        <span>list / read / write / delete</span>
+        <span className={transfer.error ? 'status-error' : undefined}>
+          {transfer.error ?? transfer.message ?? 'Ready'}
+        </span>
+        <span>list / read / write / delete / mkdir / rename</span>
       </footer>
     </main>
   )

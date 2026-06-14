@@ -22,6 +22,36 @@ export function parentVirtualPath(path: string): string | null {
 }
 
 /**
+ * 仮想パスの末尾要素（ファイル / ディレクトリ名）を返す。
+ */
+export function basenameVirtual(path: string): string {
+  return posix.basename(normalizeVirtualPath(path))
+}
+
+/**
+ * 「正規化済みの絶対仮想エントリパス（ルート不可）」かを判定する。
+ *
+ * provider 側は受け取ったパスを normalizeVirtualPath で正規化するため、'//', '/.', '/foo/..',
+ * 末尾スラッシュ等の曖昧入力はルートや親へ滑り込み得る。先頭スラッシュ必須・末尾スラッシュ禁止・
+ * 正規化結果が入力と一致・ルートでない、を満たす canonical な入力だけを true とする。
+ */
+export function isCanonicalVirtualEntryPath(path: string): boolean {
+  if (!path.startsWith('/') || path.endsWith('/')) return false
+  const normalized = normalizeVirtualPath(path)
+  return normalized !== '/' && normalized === path
+}
+
+/**
+ * path が ancestor 自身、またはその配下かを判定する。
+ * rename で destination が source 配下へ潜り込む不正移動を弾くために使う。
+ */
+export function isDescendantOrSelf(path: string, ancestor: string): boolean {
+  const target = normalizeVirtualPath(path)
+  const base = normalizeVirtualPath(ancestor)
+  return target === base || target.startsWith(base === '/' ? '/' : `${base}/`)
+}
+
+/**
  * SFTP の実パスへ変換する。
  * rootPath より上へは出られないよう、仮想パスは正規化してから結合する。
  */
@@ -35,10 +65,7 @@ export function joinSftpPath(rootPath: string, virtualPath: string): string {
  * S3 prefix は先頭・末尾のスラッシュ有無を吸収して一貫したキー生成に使う。
  */
 export function normalizeS3Prefix(prefix: string): string {
-  return prefix
-    .split('/')
-    .filter(Boolean)
-    .join('/')
+  return prefix.split('/').filter(Boolean).join('/')
 }
 
 /**
