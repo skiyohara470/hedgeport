@@ -95,4 +95,33 @@ describe('ConnectionSelect', () => {
     expect(onEdit).toHaveBeenCalledWith(targets[0])
     expect(onSelect).not.toHaveBeenCalled()
   })
+
+  it('onReorderDrop 未指定なら drag handle を描画しない', () => {
+    render(<ConnectionSelect targets={targets} onSelect={vi.fn()} />)
+    expect(screen.queryByLabelText('Drag 社内SFTP to reorder')).toBeNull()
+  })
+
+  it('onReorderDrop 指定時は drag handle を描画し、drop で source/target/position を渡す', () => {
+    const onReorderDrop = vi.fn()
+    render(<ConnectionSelect targets={targets} onSelect={vi.fn()} onReorderDrop={onReorderDrop} />)
+
+    expect(screen.getByLabelText('Drag 社内SFTP to reorder')).toBeTruthy()
+    // 2 件目の行へ drop（hint 無し = before）。payload は 1 件目の id。
+    const secondRow = screen.getByRole('button', { name: 'バックアップS3' }).closest('li') as HTMLElement
+    fireEvent.drop(secondRow, { dataTransfer: { getData: () => targets[0].id } })
+    expect(onReorderDrop).toHaveBeenCalledWith(targets[0].id, targets[1].id, 'before')
+  })
+
+  it('payload が空の drop（外部 drop 等）は無視する', () => {
+    const onReorderDrop = vi.fn()
+    render(<ConnectionSelect targets={targets} onSelect={vi.fn()} onReorderDrop={onReorderDrop} />)
+    const secondRow = screen.getByRole('button', { name: 'バックアップS3' }).closest('li') as HTMLElement
+    fireEvent.drop(secondRow, { dataTransfer: { getData: () => '' } })
+    expect(onReorderDrop).not.toHaveBeenCalled()
+  })
+
+  it('reorderBusy のとき drag handle は draggable=false', () => {
+    render(<ConnectionSelect targets={targets} onSelect={vi.fn()} onReorderDrop={vi.fn()} reorderBusy />)
+    expect(screen.getByLabelText('Drag 社内SFTP to reorder').getAttribute('draggable')).toBe('false')
+  })
 })
