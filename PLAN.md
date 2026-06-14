@@ -254,6 +254,57 @@ Make the file table usable without moving between rows with the mouse.
 - Add ARIA semantics for the active row and selected rows, and test single,
   toggle, range, boundary, filtered, and empty-list behavior.
 
+### P1: Localization Completion
+
+Complete Japanese and English coverage for every user-visible renderer string.
+
+Known gaps include:
+
+- Connection create/edit form labels, help text, validation, test results, and
+  delete actions
+- New-directory and rename dialogs
+- Editor/preview controls, encoding warnings, and external-edit status
+- Batch-operation results, fallback errors, context menus, tooltips, titles, and
+  ARIA labels
+
+Requirements:
+
+- Do not leave user-visible strings embedded directly in React components.
+- Keep translation keys typed and use one shared translator for toolbar,
+  context-menu, shortcut, confirmation, and status labels.
+- Preserve dynamic values such as connection names, paths, encodings, provider
+  names, counts, and file-manager names.
+- Define plural/count phrasing explicitly for both languages.
+- Main-process/server error text may remain technical English initially, but
+  renderer fallback and validation messages must be localized.
+- Add a test or lint-style contract that detects newly introduced untranslated
+  renderer literals, with explicit allowlists for technical terms.
+- Test the connection create/edit flow and new-directory/rename flow end to end
+  in both Japanese and English.
+
+### P1: Application Icon And Launchable Distribution
+
+Add HedgePort application branding and produce an installable/launchable desktop
+build rather than only a development bundle.
+
+- Create a single high-resolution source icon with safe margins and transparent
+  background.
+- Generate platform assets: macOS `.icns`, Windows `.ico`, and Linux PNG sizes.
+- Use the icon for packaged applications, installers, taskbar/dock, window icon
+  where supported, and development windows where practical.
+- Add packaging configuration and scripts such as `package` / `dist` without
+  changing the existing development and test commands.
+- Define application ID, product name, executable name, artifact names, and
+  version source.
+- Verify a clean build can be installed or launched on macOS first; document
+  unsigned-build warnings until code signing/notarization is configured.
+- Keep credentials and user settings outside the packaged application so
+  upgrades do not overwrite them.
+- Add smoke checks that the packaged app starts, opens its main window, loads
+  settings/connections, and displays the expected icon.
+- Treat Windows installer and Linux package formats as follow-up deliverables
+  after the macOS packaging path is stable.
+
 ### P2: Transfer Reliability
 
 - Streaming upload/download instead of whole-file buffering
@@ -340,9 +391,11 @@ have proven useful. Do not mix SQL query execution into the file panes.
 8. Mouse back/forward directory navigation
 9. Integrated window chrome and themed form controls
 10. Keyboard file navigation and Space selection
-11. Streaming transfer queue and progress
-12. `DataSourceProvider` design
-13. Read-only DynamoDB explorer
+11. Complete Japanese/English localization
+12. Application icon and launchable macOS package
+13. Streaming transfer queue and progress
+14. `DataSourceProvider` design
+15. Read-only DynamoDB explorer
 
 ## Definition Of Done
 
