@@ -644,12 +644,15 @@ function FileTable({
             <thead>
               <tr>
                 <th className="checkbox-cell">
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
-                    aria-label={t('table.selectAll')}
-                    onChange={toggleSelectAll}
-                  />
+                  {/* label でセル全体を hit area 化（input semantics/aria/indeterminate は維持）。 */}
+                  <label className="checkbox-control">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      aria-label={t('table.selectAll')}
+                      onChange={toggleSelectAll}
+                    />
+                  </label>
                 </th>
                 <th aria-sort={ariaSortValue('name', sortKey, sortDirection)}>
                   <button className="sort-button" type="button" onClick={() => toggleSort('name')}>
@@ -700,22 +703,24 @@ function FileTable({
                     }}
                     onDoubleClick={(event) => handleRowDoubleClick(event, entry)}
                   >
-                    <td className="checkbox-cell">
-                      <input
-                        type="checkbox"
-                        aria-label={t('table.select', { name: entry.name })}
-                        checked={selected}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={(event) => {
-                          event.stopPropagation()
-                          setSelection((current) =>
-                            selectEntry(current, orderedPaths, entry.path, {
-                              toggle: true,
-                              range: false,
-                            })
-                          )
-                        }}
-                      />
+                    {/* セル全体（label）を hit area にし、行の onClick(open/選択) へ二重発火させない。 */}
+                    <td className="checkbox-cell" onClick={(event) => event.stopPropagation()}>
+                      <label className="checkbox-control">
+                        <input
+                          type="checkbox"
+                          aria-label={t('table.select', { name: entry.name })}
+                          checked={selected}
+                          onChange={(event) => {
+                            event.stopPropagation()
+                            setSelection((current) =>
+                              selectEntry(current, orderedPaths, entry.path, {
+                                toggle: true,
+                                range: false,
+                              })
+                            )
+                          }}
+                        />
+                      </label>
                     </td>
                     <td>
                       <span className="entry-name">

@@ -27,6 +27,16 @@ import type {
  * React 側は Node.js や ipcRenderer を直接触らず、この窓口だけを経由する。
  */
 const api = {
+  // OS 種別（'darwin' / 'win32' / 'linux' 等）。UA 依存を避け、タイトルバー方針の分岐に使う読み取り専用値。
+  platform: process.platform as NodeJS.Platform,
+  // ウィンドウの全画面状態変化を購読する（boolean のみ listener へ渡し、解除関数を返す）。
+  onFullScreenChange: (listener: (fullScreen: boolean) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, fullScreen: unknown): void => {
+      if (typeof fullScreen === 'boolean') listener(fullScreen)
+    }
+    ipcRenderer.on('window:fullscreen', handler)
+    return () => ipcRenderer.removeListener('window:fullscreen', handler)
+  },
   // プレビューウィンドウを開く。失敗（不正要求・描画ロード失敗等）は reject で renderer へ返す。
   openPreview: (request: PreviewOpenRequest): Promise<void> => ipcRenderer.invoke('preview:open', request),
   // プレビューウィンドウ自身のセッションのメタ情報（name/path/source）。内容ロードと独立に取得できる。

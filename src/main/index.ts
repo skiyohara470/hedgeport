@@ -34,6 +34,7 @@ import {
   type PreviewWriters,
 } from './previewSession'
 import { loadSettings, saveSettings } from './settingsStore'
+import { windowChromeOptions } from './windowChrome'
 import type { HistoryDirection } from '../shared/navigation'
 import {
   deleteFile,
@@ -81,6 +82,18 @@ function loadRenderer(window: BrowserWindow, route = ''): Promise<void> {
 }
 
 /**
+ * ウィンドウの全画面状態を renderer へ通知する（enter/leave で boolean を送る）。
+ * macOS 統合タイトルバーの traffic light 用左余白を、全画面時に畳むために使う。
+ *
+ * @param window 対象ウィンドウ
+ */
+function notifyFullScreenChanges(window: BrowserWindow): void {
+  const send = (value: boolean): void => window.webContents.send('window:fullscreen', value)
+  window.on('enter-full-screen', () => send(true))
+  window.on('leave-full-screen', () => send(false))
+}
+
+/**
  * 通常操作用のメインウィンドウを生成する。
  * 外部リンクはアプリ内で開かず、OS 既定ブラウザへ委譲する。
  */
@@ -91,6 +104,8 @@ function createMainWindow(): void {
     minWidth: 900,
     minHeight: 600,
     title: 'HedgePort',
+    // macOS は統合タイトルバー（traffic lights は native のまま）。他 OS は native frame 維持。
+    ...windowChromeOptions(process.platform),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -101,6 +116,9 @@ function createMainWindow(): void {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
+
+  // 全画面では traffic lights が消えるため、renderer 側のタイトルバー左余白を畳めるよう状態を通知する。
+  notifyFullScreenChanges(window)
 
   // マウス戻る/進む（Win/Linux app-command）と macOS トラックパッド swipe を、
   // メインウィンドウでのみ捕捉して renderer のディレクトリ履歴移動へ橋渡しする。
@@ -161,11 +179,14 @@ function openPreviewWindow(request: unknown): Promise<void> {
       minHeight: 400,
       // タイトルにファイル名を含める（表示用。シェル等の危険な用途へは使わない）。
       title: `${validated.name} — HedgePort Preview`,
+      // メインウィンドウと同じタイトルバー方針（mac 統合 / 他 OS native frame）。
+      ...windowChromeOptions(process.platform),
       webPreferences: {
         preload: join(__dirname, '../preload/index.mjs'),
         sandbox: false,
       },
     })
+    notifyFullScreenChanges(previewWindow)
     return {
       id: previewWindow.webContents.id,
       loadContent: () => loadRenderer(previewWindow, '#preview'),

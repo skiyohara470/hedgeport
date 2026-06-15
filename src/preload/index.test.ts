@@ -122,6 +122,30 @@ describe('preload api', () => {
     expect(invokeMock).toHaveBeenCalledWith('preview:save', { text: 'x', encoding: 'utf-8', bom: false })
   })
 
+  it('platform を読み取り専用で公開し、onFullScreenChange は boolean だけを listener へ渡す', async () => {
+    await import('./index')
+    const api = exposeMock.mock.calls[0][1] as Record<string, unknown>
+
+    // platform は process.platform 由来の読み取り専用値（UA 非依存）。
+    expect(api.platform).toBe(process.platform)
+
+    const listener = vi.fn()
+    const onFullScreenChange = api.onFullScreenChange as (l: (full: boolean) => void) => () => void
+    const unsubscribe = onFullScreenChange(listener)
+    expect(onMock).toHaveBeenCalledWith('window:fullscreen', expect.any(Function))
+    const handler = onMock.mock.calls[0][1] as (event: unknown, value: unknown) => void
+
+    // boolean 以外は渡さない。
+    handler({}, 'yes')
+    handler({}, 1)
+    expect(listener).not.toHaveBeenCalled()
+    handler({}, true)
+    expect(listener).toHaveBeenCalledWith(true)
+
+    unsubscribe()
+    expect(removeListenerMock).toHaveBeenCalledWith('window:fullscreen', handler)
+  })
+
   it('onHistoryNavigation は購読/解除し、direction だけを listener へ渡す', async () => {
     await import('./index')
     const api = exposeMock.mock.calls[0][1] as Record<string, (...args: unknown[]) => unknown>

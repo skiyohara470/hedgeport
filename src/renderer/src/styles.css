@@ -1012,16 +1012,136 @@ tbody tr.selected-row td {
 
 .checkbox-cell {
   width: 34px;
-  padding-right: 4px;
-  padding-left: 12px;
+  /* hit area は内側の label が持つため td 自体の padding は外す（行高は label の padding で維持）。 */
+  padding: 0;
 }
 
-.checkbox-cell input {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--c-accent);
+/* チェックボックスのクリック/タップ対象をセル全体へ広げる（行高は変えない）。 */
+.checkbox-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  /* 縦 padding は他セル（th,td）と同じにして行高を維持する。 */
+  padding: calc(6px * var(--density-scale)) 4px calc(6px * var(--density-scale)) 12px;
   cursor: pointer;
+}
+
+/* OS 標準の浮いた描画をやめ、theme token で HedgePort 固有の見た目へ統一する。 */
+.checkbox-cell input[type='checkbox'] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  display: inline-grid;
+  place-content: center;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 4px;
+  background: var(--c-surface);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.checkbox-control:hover input[type='checkbox'] {
+  border-color: var(--c-accent);
+}
+
+/* チェック時: accent 背景 + on-accent 色のチェックマーク。 */
+.checkbox-cell input[type='checkbox']:checked {
+  border-color: var(--c-accent);
+  background: var(--c-accent);
+}
+
+.checkbox-cell input[type='checkbox']:checked::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  margin-top: -1px;
+  border: solid var(--c-accent-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* 中間状態（全選択の一部）: accent 背景 + 横棒。 */
+.checkbox-cell input[type='checkbox']:indeterminate {
+  border-color: var(--c-accent);
+  background: var(--c-accent);
+}
+
+.checkbox-cell input[type='checkbox']:indeterminate::after {
+  content: '';
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--c-accent-bg);
+}
+
+.checkbox-cell input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+.checkbox-cell input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 高コントラスト / forced-colors では OS / システム色へ委ねる（独自描画を無効化）。 */
+@media (forced-colors: active) {
+  .checkbox-cell input[type='checkbox'] {
+    appearance: auto;
+  }
+
+  .checkbox-cell input[type='checkbox']::after {
+    display: none;
+  }
+}
+
+/* --- macOS 統合タイトルバー（titleBarStyle: hiddenInset） ---
+   data-platform='darwin' のときだけ、上端バーをタイトルバー領域へ統合する。
+   Windows / Linux は native frame のまま（このブロックは適用されない）。 */
+
+/* 上端バー（workspace-bar / preview-header / connection 画面の余白）をドラッグ領域にする。 */
+:root[data-platform='darwin'] .workspace-bar,
+:root[data-platform='darwin'] .preview-header,
+:root[data-platform='darwin'] .connection-screen {
+  -webkit-app-region: drag;
+}
+
+/* traffic lights（左上）と tab / toolbar が重ならないよう左余白を確保する。 */
+:root[data-platform='darwin'] .workspace-bar {
+  padding-left: 84px;
+}
+
+:root[data-platform='darwin'] .preview-header {
+  padding-left: 84px;
+}
+
+/* connection カード本体は通常操作（クリック / テキスト選択）を保つため drag 対象から外す。
+   周囲のグラデーション余白だけがドラッグ可能になる。 */
+:root[data-platform='darwin'] .connection-card {
+  -webkit-app-region: no-drag;
+}
+
+/* drag 領域内でも操作要素はクリック / 入力できるよう no-drag にする。 */
+:root[data-platform='darwin'] button,
+:root[data-platform='darwin'] a,
+:root[data-platform='darwin'] input,
+:root[data-platform='darwin'] select,
+:root[data-platform='darwin'] textarea,
+:root[data-platform='darwin'] label,
+:root[data-platform='darwin'] .tab,
+:root[data-platform='darwin'] .checkbox-control {
+  -webkit-app-region: no-drag;
+}
+
+/* 全画面では traffic lights が消えるため左余白を畳む（余白過多を避ける）。 */
+:root[data-platform='darwin'][data-fullscreen='true'] .workspace-bar,
+:root[data-platform='darwin'][data-fullscreen='true'] .preview-header {
+  padding-left: 10px;
 }
 
 .placeholder-note {

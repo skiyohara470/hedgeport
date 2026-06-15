@@ -321,36 +321,51 @@ Mapping/de-dupe logic is in pure, unit-tested functions
 
 ### P1: Window Chrome And Native Control Integration
 
+Status: implemented.
+
 Make the Electron window frame and native-looking form controls feel consistent
 with the selected HedgePort theme.
 
-Window title bar:
+Window title bar (implemented):
 
-- On macOS, use an integrated title bar such as `titleBarStyle: 'hiddenInset'`
-  while retaining the native traffic-light close/minimize/zoom controls.
-- Extend the application background into the title-bar area so the top strip
-  does not appear as a separate light or dark block.
-- Reserve a drag region with `-webkit-app-region: drag` and explicitly mark
-  buttons, tabs, inputs, and other interactive elements as `no-drag`.
-- Position toolbar content and traffic lights without overlap at supported
-  window sizes.
-- Apply the same policy to the main and preview windows.
-- Keep platform-specific behavior: do not imitate macOS traffic lights on
-  Windows or Linux. Use Electron title-bar overlay capabilities only where they
-  preserve native window operations and accessibility.
-- Verify fullscreen, maximize/restore, window dragging, double-click title-bar
-  behavior, and keyboard window commands.
+- On macOS the main and preview `BrowserWindow`s use `titleBarStyle: 'hiddenInset'`
+  with the native traffic lights retained; Windows/Linux keep the native frame
+  (no imitation traffic lights). The mac/non-mac options come from a pure,
+  electron-free `windowChromeOptions(process.platform)` (`main/windowChrome.ts`,
+  unit-tested).
+- The app background extends into the title-bar area: the top strips
+  (`workspace-bar`, `preview-header`, and the connection screen's gradient) use
+  the same theme background, so the top does not show as a separate block.
+- `-webkit-app-region: drag` is set on those top strips (mac only, gated by a
+  `data-platform='darwin'` root attribute); buttons, tabs, inputs, selects,
+  textareas, labels, and the checkbox controls are `no-drag` so they stay
+  interactive. The connection card itself is `no-drag` (only the surrounding
+  gradient drags) so its content stays selectable/clickable.
+- A left inset (`padding-left`) keeps the tabs/toolbar and the preview header
+  clear of the traffic lights; in fullscreen (no traffic lights) the inset is
+  collapsed. Fullscreen state is pushed from main (`enter/leave-full-screen`) via
+  `onFullScreenChange` and toggles a `data-fullscreen` root attribute.
+- The renderer learns the platform from a narrow read-only `platform` value
+  exposed by preload (no `navigator` UA sniffing). `applyPlatform` /
+  `applyFullScreen` (`features/platform/platform.ts`) set the root attributes and
+  are unit-tested.
+- Dragging, the native double-click title-bar action, and fullscreen/maximize are
+  not intercepted (drag regions are CSS-only and interactive controls are
+  no-drag). Real-device verification of fullscreen/maximize/restore and keyboard
+  window commands is still recommended (jsdom cannot exercise native chrome).
 
-Form controls:
+Form controls (implemented for file selection):
 
-- Theme checkboxes consistently instead of relying on the OS-default floating
-  appearance.
-- Support unchecked, checked, disabled, focused, and `indeterminate` states.
-- Use theme color tokens and scale with font-size/density settings.
-- Preserve the native input element for semantics, keyboard operation, screen
-  readers, and form behavior; custom styling must not replace accessibility.
-- Apply the same checkbox styling to file selection, select-all, settings, and
-  editor BOM controls.
+- File list checkboxes (rows and select-all) use `appearance: none` with a
+  theme-token design (background/border/radius, hover, checked check-mark,
+  `indeterminate` dash, `focus-visible` ring, disabled) that scales with
+  light/dark, font-size, and density. The native `<input type="checkbox">` is
+  kept (semantics/keyboard/aria/`indeterminate`); it is wrapped in a `<label>`
+  that makes the whole ~34px cell a hit target without increasing row height, and
+  the cell stops click propagation so row open/selection does not double-fire.
+  `forced-colors` falls back to the native rendering.
+- Remaining checkboxes (settings, editor/preview BOM, search "match case") still
+  use the default control; unifying them is a follow-up.
 
 ### P1: Keyboard File Navigation And Selection
 

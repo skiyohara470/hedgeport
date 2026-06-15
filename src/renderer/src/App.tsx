@@ -7,6 +7,7 @@ import { FilerWorkspace } from './features/filer/FilerWorkspace'
 import { Icon } from './features/icons/Icon'
 import { I18nProvider } from './features/i18n/I18nContext'
 import { createTranslator, resolveMessage, type Message } from './features/i18n/translations'
+import { applyFullScreen, applyPlatform } from './features/platform/platform'
 import { PreviewWindow } from './features/preview/PreviewWindow'
 import { SettingsDialog } from './features/settings/SettingsDialog'
 import { SettingsProvider } from './features/settings/SettingsContext'
@@ -50,6 +51,13 @@ export function App() {
         }
       })
       .finally(() => setIsLoading(false))
+  }, [])
+
+  // OS 種別と全画面状態をルート要素へ反映する（macOS 統合タイトルバーの drag 領域 / 左余白の出し分け）。
+  // App は main / preview（#preview）双方のトップなので、ここで一括して扱う。
+  useEffect(() => {
+    applyPlatform(document.documentElement, window.hedgeport?.platform)
+    return window.hedgeport?.onFullScreenChange?.((fullScreen) => applyFullScreen(document.documentElement, fullScreen))
   }, [])
 
   // プレビューと providers 用の実効設定（ロード前 / draft プレビュー込み）。

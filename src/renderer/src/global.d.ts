@@ -26,6 +26,8 @@ declare global {
    * UI は main process の機能をこの窓口経由でだけ利用する。
    */
   interface HedgePortApi {
+    platform: NodeJS.Platform
+    onFullScreenChange: (listener: (fullScreen: boolean) => void) => () => void
     openPreview: (request: PreviewOpenRequest) => Promise<void>
     previewMetadata: () => Promise<PreviewMeta>
     loadPreview: (encoding?: ReadEncoding) => Promise<PreviewDocument>
