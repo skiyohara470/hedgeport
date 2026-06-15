@@ -3,14 +3,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createDefaultSettings, type AppSettings } from '../../../../shared/settings'
-import type { PreviewDocument, PreviewMeta } from '../../../../shared/preview'
-import type { TextEncoding } from '../../../../shared/transfer'
+import type { PreviewDocument, PreviewMeta, PreviewSaveResult } from '../../../../shared/preview'
+import { MAX_EDITABLE_TEXT_BYTES, type TextEncoding } from '../../../../shared/transfer'
 import { PreviewWindow } from './PreviewWindow'
 
 beforeEach(() => {
   // jsdom 未実装の API をスタブする。
   Element.prototype.scrollIntoView = vi.fn()
   window.close = vi.fn()
+  window.confirm = vi.fn().mockReturnValue(true)
   window.matchMedia = vi.fn().mockReturnValue({
     matches: false,
     addEventListener: vi.fn(),
@@ -24,12 +25,13 @@ afterEach(() => {
 })
 
 const previewDoc = (
-  over: Partial<PreviewDocument> & { text?: string; encoding?: TextEncoding } = {}
+  over: Partial<PreviewDocument> & { text?: string; encoding?: TextEncoding; bom?: boolean } = {}
 ): PreviewDocument => ({
   name: over.name ?? 'a.txt',
   displayPath: over.displayPath ?? '/remote/a.txt',
   source: over.source ?? 'remote',
-  document: { text: over.text ?? 'hello world', encoding: over.encoding ?? 'utf-8', bom: false },
+  document: { text: over.text ?? 'hello world', encoding: over.encoding ?? 'utf-8', bom: over.bom ?? false },
+  byteLength: over.byteLength ?? (over.text ?? 'hello world').length,
 })
 
 const previewMeta = (over: Partial<PreviewMeta> = {}): PreviewMeta => ({
@@ -41,18 +43,22 @@ const previewMeta = (over: Partial<PreviewMeta> = {}): PreviewMeta => ({
 /** window.hedgeport をモックして PreviewWindow を描画する。 */
 function setup(opts: {
   loadPreview: (encoding?: unknown) => Promise<PreviewDocument>
+  savePreview?: (request: unknown) => Promise<PreviewSaveResult>
   meta?: PreviewMeta
   settings?: AppSettings
 }) {
   const loadSettings = vi.fn().mockResolvedValue(opts.settings ?? createDefaultSettings('en'))
   const loadPreview = vi.fn(opts.loadPreview)
+  const savePreview = vi.fn(
+    opts.savePreview ?? (() => Promise.resolve({ status: 'saved', revision: 'r', byteLength: 0 }))
+  )
   const previewMetadata = vi.fn().mockResolvedValue(opts.meta ?? previewMeta())
   Object.defineProperty(window, 'hedgeport', {
     configurable: true,
-    value: { loadSettings, loadPreview, previewMetadata },
+    value: { loadSettings, loadPreview, savePreview, previewMetadata },
   })
   render(<PreviewWindow />)
-  return { loadPreview, previewMetadata }
+  return { loadPreview, savePreview, previewMetadata }
 }
 
 /** 解決を外部から制御できる deferred を作る。 */
@@ -232,6 +238,190 @@ describe('PreviewWindow', () => {
 
     expect(screen.queryByLabelText('Find')).toBeNull()
     expect(window.close).not.toHaveBeenCalled()
+  })
+
+  it('Edit ボタンで編集モードへ入り、編集して保存できる', async () => {
+    const { savePreview } = setup({
+      loadPreview: () => Promise.resolve(previewDoc({ text: 'hello', encoding: 'utf-8' })),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    expect(textarea.tagName).toBe('TEXTAREA')
+    expect(textarea.value).toBe('hello')
+
+    // 未編集では Save 無効。編集すると有効。
+    const saveButton = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
+    expect(saveButton.disabled).toBe(true)
+    fireEvent.change(textarea, { target: { value: 'hello world' } })
+    expect(saveButton.disabled).toBe(false)
+
+    fireEvent.click(saveButton)
+    await waitFor(() =>
+      expect(savePreview).toHaveBeenCalledWith({
+        text: 'hello world',
+        encoding: 'utf-8',
+        bom: false,
+        overwriteToken: undefined,
+      })
+    )
+    expect(await screen.findByText('Saved')).toBeTruthy()
+  })
+
+  it('保存後に doc を更新し、Cancel→view→再 Edit で新本文を seed する', async () => {
+    const savePreview = vi.fn(
+      (_request: unknown): Promise<PreviewSaveResult> =>
+        Promise.resolve({ status: 'saved', revision: 'r2', byteLength: 2 })
+    )
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'a' })), savePreview })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    let textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'ab' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('Saved')
+
+    // Cancel で view へ。本文は新内容を表示（loadPreview の再呼び出しはしない）。
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const body = await screen.findByLabelText('File contents')
+    expect(body.tagName).toBe('PRE')
+    expect(body.textContent).toBe('ab')
+
+    // 再 Edit は古い 'a' ではなく新本文 'ab' を seed する（巻き戻し防止）。
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    expect(textarea.value).toBe('ab')
+  })
+
+  it('Ctrl/Cmd+S でも保存する', async () => {
+    const { savePreview } = setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'x' })) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'xy' } })
+    fireEvent.keyDown(textarea, { key: 's', ctrlKey: true })
+    await waitFor(() => expect(savePreview).toHaveBeenCalledTimes(1))
+  })
+
+  it('編集上限を超えるファイルは編集不可メッセージを出し、閲覧を継続する', async () => {
+    const { savePreview } = setup({
+      loadPreview: () => Promise.resolve(previewDoc({ text: 'big', byteLength: MAX_EDITABLE_TEXT_BYTES + 1 })),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    // 編集には入らず（textarea は出ない）、メッセージを表示して閲覧（pre）を継続。
+    expect(await screen.findByText(/cannot be edited/)).toBeTruthy()
+    expect((screen.getByLabelText('File contents') as HTMLElement).tagName).toBe('PRE')
+    expect(savePreview).not.toHaveBeenCalled()
+  })
+
+  it('保存時の競合は確認のうえ main 発行トークンで再保存する', async () => {
+    let attempt = 0
+    const savePreview = vi.fn((_request: unknown): Promise<PreviewSaveResult> => {
+      attempt += 1
+      return attempt === 1
+        ? Promise.resolve({ status: 'conflict', token: 'tok-xyz' })
+        : Promise.resolve({ status: 'saved', revision: 'r2', byteLength: 2 })
+    })
+    window.confirm = vi.fn().mockReturnValue(true)
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'a' })), savePreview })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'ab' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(savePreview).toHaveBeenCalledTimes(2))
+    // 初回はトークンなし、再保存は main が返したトークンを添える（renderer の真偽値ではない）。
+    expect(savePreview.mock.calls[0][0]).toMatchObject({ overwriteToken: undefined })
+    expect(savePreview.mock.calls[1][0]).toMatchObject({ overwriteToken: 'tok-xyz' })
+  })
+
+  it('競合確認を拒否すると上書きしない', async () => {
+    const savePreview = vi.fn(
+      (_request: unknown): Promise<PreviewSaveResult> => Promise.resolve({ status: 'conflict', token: 'tok-xyz' })
+    )
+    window.confirm = vi.fn().mockReturnValue(false)
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'a' })), savePreview })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'ab' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(savePreview).toHaveBeenCalledTimes(1))
+    // overwrite 再試行はしない。
+    expect(savePreview).toHaveBeenCalledTimes(1)
+  })
+
+  it('未保存のまま閉じると確認し、承認時のみウィンドウを閉じる', async () => {
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'a' })) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'ab' } })
+
+    // 拒否 → 閉じない。
+    window.confirm = vi.fn().mockReturnValue(false)
+    fireEvent.click(screen.getByLabelText('Close'))
+    expect(window.confirm).toHaveBeenCalled()
+    expect(window.close).not.toHaveBeenCalled()
+
+    // 承認 → 閉じる。
+    window.confirm = vi.fn().mockReturnValue(true)
+    fireEvent.click(screen.getByLabelText('Close'))
+    expect(window.close).toHaveBeenCalled()
+  })
+
+  it('編集モードでは検索バーを開かない（Ctrl+F 無効）', async () => {
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'foo foo' })) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    await screen.findByLabelText('File contents')
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    expect(screen.queryByLabelText('Find')).toBeNull()
+  })
+
+  it('編集中の encoding 変更で再読込結果が編集上限超なら編集へ反映せず閲覧へ戻す', async () => {
+    let call = 0
+    setup({
+      loadPreview: () => {
+        call += 1
+        // 初回(auto)は小さく編集可能、shift_jis 再読込は 1MiB 超で返す。
+        return call === 1
+          ? Promise.resolve(previewDoc({ text: 'small', encoding: 'utf-8' }))
+          : Promise.resolve(previewDoc({ text: 'big', encoding: 'shift_jis', byteLength: MAX_EDITABLE_TEXT_BYTES + 1 }))
+      },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const select = (await screen.findByLabelText('Encoding')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'shift_jis' } })
+
+    // 編集バッファへ入れず、閲覧へ戻して編集不可メッセージを出す。
+    expect(await screen.findByText(/cannot be edited/)).toBeTruthy()
+    await waitFor(() => expect((screen.getByLabelText('File contents') as HTMLElement).tagName).toBe('PRE'))
+  })
+
+  it('beforeunload: dirty 時は確認し、拒否で close をキャンセル / 承認で許可する', async () => {
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'a' })) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'ab' } })
+
+    // 拒否 → preventDefault（close キャンセル）。
+    window.confirm = vi.fn().mockReturnValue(false)
+    const rejected = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(rejected)
+    expect(window.confirm).toHaveBeenCalled()
+    expect(rejected.defaultPrevented).toBe(true)
+
+    // 承認 → preventDefault しない（close 許可）。
+    window.confirm = vi.fn().mockReturnValue(true)
+    const approved = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(approved)
+    expect(approved.defaultPrevented).toBe(false)
+  })
+
+  it('beforeunload: 未編集ならダイアログを出さず close を許可する', async () => {
+    setup({ loadPreview: () => Promise.resolve(previewDoc({ text: 'a' })) })
+    await screen.findByLabelText('File contents')
+    window.confirm = vi.fn()
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
   })
 
   it('設定（日本語 / テーマ）を適用する', async () => {

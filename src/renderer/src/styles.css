@@ -1493,6 +1493,31 @@ tbody tr.selected-row td {
   color: var(--c-danger-strong);
 }
 
+.preview-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 16px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  color: var(--c-text);
+  background: var(--c-sunken);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.preview-saved-note {
+  flex: none;
+  margin: 0;
+  padding: 4px 16px;
+  color: var(--c-text-muted);
+  font-size: 0.8rem;
+}
+
 @media (max-width: 760px) {
   .pane-grid.split {
     grid-template-columns: 1fr;

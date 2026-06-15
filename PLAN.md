@@ -134,8 +134,8 @@ Security requirements:
 
 Connect the standalone preview window to actual local and remote files.
 
-Status: real file preview and Search Within Preview are implemented; Diff is not
-yet done. The default Open for a file — double-click, Enter, the toolbar eye, and
+Status: real file preview, Search Within Preview, and Edit Within Preview are
+implemented; Diff is not yet done. The default Open for a file — double-click, Enter, the toolbar eye, and
 the context-menu Open, in any pane (local/SFTP/S3) — all open a dedicated preview
 window through one shared dispatch; directories navigate in place on the same
 paths. Built-in Editor / System Default / Choose Application are explicit choices
@@ -160,8 +160,9 @@ too-large message. The size cap is checked after the provider/fs reads the whole
 file into memory (current readers have no streaming path), so it bounds decode,
 not the read itself — noted as a known constraint.
 The preview renderer receives only `PreviewMeta` (name, display path, source) for
-the header and a `PreviewDocument` (meta + `TextDocument`) for the body — no
-target/secret. Metadata is fetched separately from content, so the file name /
+the header and a `PreviewDocument` (meta + `TextDocument` + the file's
+`byteLength`) for the body — no target/secret. The `byteLength` lets the renderer
+decide whether the file is small enough to edit. Metadata is fetched separately from content, so the file name /
 source / path stay visible even while a decode/read fails. Content is rendered as
 React text nodes (never `dangerouslySetInnerHTML`); the encoding select offers
 Auto/UTF-8/Shift_JIS/EUC-JP and keeps the user's choice — picking Auto stays Auto
@@ -193,6 +194,54 @@ Future enhancement:
 - Add an optional regular-expression mode with an explicit toggle.
 - Show invalid-pattern errors without hiding the current file contents.
 - Keep match/result limits and avoid patterns that can block the renderer.
+
+#### Edit Within Preview
+
+Status: implemented.
+
+An Edit button at the top of the preview window switches it from the read-only
+viewer to an in-window editor (local / SFTP / S3 all save). View mode keeps the
+existing 20 MiB display/search; edit mode is allowed only for files of at most
+1 MiB (`MAX_EDITABLE_TEXT_BYTES`, decided from the document's `byteLength`).
+Larger files show a clear i18n message and stay open for viewing. The editor
+seeds from the loaded document's concrete encoding and UTF-8 BOM and lets the user
+pick encoding/BOM exactly like the Built-in Editor (changing encoding reloads and
+re-decodes the file; if that reload comes back over 1 MiB the buffer is not
+replaced — it returns to view with the too-large message). `Ctrl/Cmd+S` saves.
+On a successful save the renderer updates the in-window document (text/encoding/BOM
+plus the byte length main actually wrote), so cancelling back to view shows the new
+content and re-entering edit seeds the new content — it can never silently re-save
+stale text over a newer revision. Closing the window with unsaved changes prompts
+for confirmation: the Close button confirms explicitly, and a `beforeunload`
+handler also runs `window.confirm` on a dirty OS-window close and only cancels the
+close when the user declines (Electron's `beforeunload` otherwise cancels
+silently).
+
+Saving is conflict-aware and both the conflict detection and the overwrite
+decision are made in main, never via a renderer boolean. The main process keeps a
+stable content revision per session (SHA-256 of the file bytes captured at load and
+after each successful save, provider-agnostic; `contentRevision.ts`).
+`preview:save` is bound to `event.sender.id` and the renderer passes only
+`{ text, encoding, bom, overwriteToken? }` — never a target/path. Before writing,
+main re-reads the current revision; if it differs from the session's known
+revision, main issues a one-time overwrite token bound to that session and the
+observed conflict revision and returns `conflict { token }` without writing. The
+renderer asks the user and only retries with that exact token. On retry main
+re-checks: the token must match the session's pending token (invalid / reused /
+another window's tokens are rejected) and the live revision must still equal the
+revision the token was issued for — if the file changed again, a fresh
+`conflict { token }` is returned instead of overwriting. The pending token is
+discarded on successful save, on reload, and on window close. Reads/writes reuse
+the existing validated `*WithRevision` reader/writer helpers (path/NUL/encoding
+checks, symlink/TOCTOU protection for local, 1 MiB encode cap), and writers return
+the written revision and byte length, so no save logic is duplicated. (S3 read is
+eventually consistent, so a just-written object may briefly read stale on a
+subsequent conflict check — a known provider limitation.)
+
+Future enhancement:
+
+- Surface a non-blocking "saved" toast and last-saved indicator.
+- Optionally show a diff before overwriting on conflict.
 
 #### Diff
 

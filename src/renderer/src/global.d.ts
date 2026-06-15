@@ -1,6 +1,12 @@
 import type { ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
 import type { HistoryDirection } from '../../shared/navigation'
-import type { PreviewDocument, PreviewMeta, PreviewOpenRequest } from '../../shared/preview'
+import type {
+  PreviewDocument,
+  PreviewMeta,
+  PreviewOpenRequest,
+  PreviewSaveRequest,
+  PreviewSaveResult,
+} from '../../shared/preview'
 import type { AppSettings } from '../../shared/settings'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type {
@@ -23,6 +29,7 @@ declare global {
     openPreview: (request: PreviewOpenRequest) => Promise<void>
     previewMetadata: () => Promise<PreviewMeta>
     loadPreview: (encoding?: ReadEncoding) => Promise<PreviewDocument>
+    savePreview: (request: PreviewSaveRequest) => Promise<PreviewSaveResult>
     listLocal: (path?: string) => Promise<LocalDirectory>
     loadConnections: () => Promise<ConnectionTarget[]>
     saveConnections: (targets: ConnectionTarget[]) => Promise<void>

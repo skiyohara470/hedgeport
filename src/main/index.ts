@@ -11,7 +11,14 @@ import {
   startExternalEdit,
   uploadExternalEdit,
 } from './externalEdit'
-import { chooseApplicationAndOpen, readLocalText, writeLocalText } from './fileOpening'
+import {
+  chooseApplicationAndOpen,
+  readLocalRevision,
+  readLocalText,
+  readLocalTextWithRevision,
+  writeLocalText,
+  writeLocalTextWithRevision,
+} from './fileOpening'
 import { isConnectionTarget, loadConnections, saveConnections } from './connectionStore'
 import { testConnection } from './connectionTesting'
 import { pickDirectory } from './dialogs'
@@ -20,13 +27,25 @@ import {
   createPreviewSessionStore,
   handlePreviewLoad,
   handlePreviewMeta,
+  handlePreviewSave,
   openPreviewSession,
   type PreviewReaders,
   type PreviewWindowHandle,
+  type PreviewWriters,
 } from './previewSession'
 import { loadSettings, saveSettings } from './settingsStore'
 import type { HistoryDirection } from '../shared/navigation'
-import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
+import {
+  deleteFile,
+  downloadFile,
+  downloadToDirectory,
+  readRemoteRevision,
+  readRemoteTextWithRevision,
+  readTextFile,
+  uploadFile,
+  writeRemoteTextWithRevision,
+  writeTextFile,
+} from './fileTransfer'
 import { listLocalEntries } from './localFileListing'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { createLocalDirectory, createRemoteDirectory, renameLocal, renameRemote } from './storageMutations'
@@ -109,8 +128,17 @@ const previewDecodeOptions = {
   tooLargeMessage: `File is too large to preview (limit ${MAX_PREVIEW_TEXT_BYTES / (1024 * 1024)} MiB).`,
 }
 const previewReaders: PreviewReaders = {
-  readRemote: (target, path, encoding) => readTextFile(target, path, encoding, previewDecodeOptions),
-  readLocal: (path, encoding) => readLocalText(path, encoding, previewDecodeOptions),
+  readRemote: (target, path, encoding) => readRemoteTextWithRevision(target, path, encoding, previewDecodeOptions),
+  readLocal: (path, encoding) => readLocalTextWithRevision(path, encoding, previewDecodeOptions),
+  // 競合検知用: 現在の内容リビジョンだけを取得する（decode しないのでサイズ/バイナリで落ちない）。
+  revisionRemote: (target, path) => readRemoteRevision(target, path),
+  revisionLocal: (path) => readLocalRevision(path),
+}
+// プレビュー編集の保存。書き込んだ内容のリビジョンを返し、競合検知の基準更新に使う。
+// 編集サイズ上限（1 MiB）・表現不能文字は writer（encode 側）が判定する。
+const previewWriters: PreviewWriters = {
+  writeRemote: (target, path, text, encoding, bom) => writeRemoteTextWithRevision(target, path, text, encoding, bom),
+  writeLocal: (path, text, encoding, bom) => writeLocalTextWithRevision(path, text, encoding, bom),
 }
 
 /**
@@ -163,6 +191,11 @@ app.whenReady().then(() => {
   ipcMain.handle('preview:metadata', (event) => handlePreviewMeta(previewSessions, event.sender.id))
   ipcMain.handle('preview:load', (event, encoding?: ReadEncoding) =>
     handlePreviewLoad(previewSessions, event.sender.id, encoding, previewReaders)
+  )
+  // save も送信元ウィンドウに束縛されたセッションだけを保存できる。target/path は renderer から受け取らず、
+  // 競合検知（読込後の変更）は main 側で判定する（renderer 任せの任意上書きを許さない）。
+  ipcMain.handle('preview:save', (event, request: unknown) =>
+    handlePreviewSave(previewSessions, event.sender.id, request, previewReaders, previewWriters)
   )
   ipcMain.handle('connections:load', loadConnections)
   ipcMain.handle('connections:save', (_event, targets: ConnectionTarget[]) => saveConnections(targets))

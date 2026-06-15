@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 import type { ConnectionTarget } from '../shared/connections'
 import type { TextDocument } from '../shared/transfer'
+import { computeContentRevision } from './contentRevision'
 import { isConnectionTarget } from './connectionStore'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { basenameVirtual, isCanonicalVirtualEntryPath } from './providers/pathUtils'
@@ -127,12 +128,49 @@ export async function readTextFile(
   encoding?: unknown,
   options?: DecodeOptions
 ): Promise<TextDocument> {
+  return (await readRemoteTextWithRevision(target, path, encoding, options)).document
+}
+
+/**
+ * リモートファイルをテキストとして読み出し、内容リビジョンも併せて返す。
+ * プレビュー編集が「読込時点の内容」を main 側で覚えるために使う。1 回の read で
+ * document（表示用デコード結果）と revision（生バイト列のハッシュ）を同時に得る。
+ *
+ * @param target 接続先設定（未検証値）
+ * @param path 読み出すリモート仮想パス
+ * @param encoding 文字コード（'auto' / concrete）
+ * @param options decode のサイズ上限・超過メッセージ（プレビューは緩い上限を注入する）
+ * @returns デコード済みテキスト・内容リビジョン・生バイト長
+ * @throws サイズ超過・バイナリ・不正 UTF-8 の場合
+ */
+export async function readRemoteTextWithRevision(
+  target: unknown,
+  path: unknown,
+  encoding?: unknown,
+  options?: DecodeOptions
+): Promise<{ document: TextDocument; revision: string; byteLength: number }> {
   assertConnectionTarget(target)
   assertRemoteFilePath(path)
   const readEncoding = resolveReadEncoding(encoding)
   const data = await createStorageProvider(target).read(path)
+  // revision は生バイト列から算出する（decode/encoding に依存しない）。
+  const revision = computeContentRevision(data)
   // サイズ上限は decode 前に判定する（プレビューは緩い上限を options で注入する）。
-  return decodeTextDocument(data, readEncoding, options)
+  return { document: decodeTextDocument(data, readEncoding, options), revision, byteLength: data.byteLength }
+}
+
+/**
+ * リモートファイルの現在の内容リビジョンだけを取得する（保存直前の競合検知用）。
+ * decode しないため、保存対象が編集上限を超えるサイズへ膨らんでいても判定でき、バイナリ判定でも落ちない。
+ *
+ * @param target 接続先設定（未検証値）
+ * @param path 対象のリモート仮想パス
+ * @returns 現在の内容リビジョン
+ */
+export async function readRemoteRevision(target: unknown, path: unknown): Promise<string> {
+  assertConnectionTarget(target)
+  assertRemoteFilePath(path)
+  return computeContentRevision(await createStorageProvider(target).read(path))
 }
 
 /**
@@ -156,6 +194,35 @@ export async function writeTextFile(
   if (typeof text !== 'string') throw new Error('Invalid text content.')
   const data = encodeTextDocument(text, textEncoding, Boolean(bom))
   await createStorageProvider(target).write(path, data)
+}
+
+/**
+ * テキストをリモートファイルへ書き込み、書き込んだ内容のリビジョンを返す。
+ * プレビュー編集の保存後にセッションの基準リビジョンを更新するため、書き込んだバイト列から
+ * そのまま revision を算出する（書き込み直後の再読込を増やさない）。サイズ上限は encode 側で判定する。
+ *
+ * @param target 接続先設定（未検証値）
+ * @param path 書き込み先のリモート仮想パス
+ * @param text 書き込むテキスト
+ * @param encoding 文字コード（未指定は utf-8）
+ * @param bom utf-8 BOM 付与有無
+ * @returns 書き込んだ内容のリビジョンと実際に書き込んだバイト長
+ * @throws テキストが文字列でない、表現不能文字、編集サイズ上限超過の場合
+ */
+export async function writeRemoteTextWithRevision(
+  target: unknown,
+  path: unknown,
+  text: unknown,
+  encoding?: unknown,
+  bom?: unknown
+): Promise<{ revision: string; byteLength: number }> {
+  assertConnectionTarget(target)
+  assertRemoteFilePath(path)
+  const textEncoding = resolveEncoding(encoding)
+  if (typeof text !== 'string') throw new Error('Invalid text content.')
+  const data = encodeTextDocument(text, textEncoding, Boolean(bom))
+  await createStorageProvider(target).write(path, data)
+  return { revision: computeContentRevision(data), byteLength: data.byteLength }
 }
 
 /**

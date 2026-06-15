@@ -22,7 +22,18 @@ vi.mock('./providers/createStorageProvider', () => ({
 }))
 
 import { MAX_EDITABLE_TEXT_BYTES, MAX_PREVIEW_TEXT_BYTES } from '../shared/transfer'
-import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
+import {
+  deleteFile,
+  downloadFile,
+  downloadToDirectory,
+  readRemoteRevision,
+  readRemoteTextWithRevision,
+  readTextFile,
+  uploadFile,
+  writeRemoteTextWithRevision,
+  writeTextFile,
+} from './fileTransfer'
+import { computeContentRevision } from './contentRevision'
 
 const target = {
   id: 'sftp-1',
@@ -226,6 +237,31 @@ describe('fileTransfer', () => {
         await expect(writeTextFile(target, path, 'x')).rejects.toThrow('Invalid remote file path.')
       }
       expect(writeMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('revision つき read/write', () => {
+    it('readRemoteTextWithRevision は document/revision/byteLength を返す（revision は生バイト由来）', async () => {
+      const bytes = new TextEncoder().encode('hi')
+      readMock.mockResolvedValue(bytes)
+      const result = await readRemoteTextWithRevision(target, '/notes.txt')
+      expect(result.document).toEqual({ text: 'hi', encoding: 'utf-8', bom: false })
+      expect(result.byteLength).toBe(2)
+      expect(result.revision).toBe(computeContentRevision(bytes))
+    })
+
+    it('readRemoteRevision は decode せず現在の内容リビジョンだけ返す', async () => {
+      // NUL を含むバイナリでも revision は取れる。
+      const bytes = new Uint8Array([0x00, 0x01])
+      readMock.mockResolvedValue(bytes)
+      await expect(readRemoteRevision(target, '/bin.dat')).resolves.toBe(computeContentRevision(bytes))
+    })
+
+    it('writeRemoteTextWithRevision は書き込んだ内容の revision と byteLength を返す', async () => {
+      const result = await writeRemoteTextWithRevision(target, '/notes.txt', 'hi', 'utf-8', false)
+      const written = writeMock.mock.calls[0][1] as Uint8Array
+      expect(result.revision).toBe(computeContentRevision(written))
+      expect(result.byteLength).toBe(written.byteLength)
     })
   })
 

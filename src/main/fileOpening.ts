@@ -6,6 +6,7 @@ import { lstat, open, type FileHandle } from 'node:fs/promises'
 import { BrowserWindow, dialog, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 
 import type { TextDocument } from '../shared/transfer'
+import { computeContentRevision } from './contentRevision'
 import {
   decodeTextDocument,
   encodeTextDocument,
@@ -88,16 +89,59 @@ export async function openVerifiedRegularFile(
  * @returns TextDocument
  */
 export async function readLocalText(path: unknown, encoding?: unknown, options?: DecodeOptions): Promise<TextDocument> {
-  assertLocalPath(path)
-  const readEncoding = resolveReadEncoding(encoding)
+  return (await readLocalTextWithRevision(path, encoding, options)).document
+}
+
+/**
+ * 検証済み通常ファイルの生バイト列を読み出す（symlink/TOCTOU 保護つき）。
+ * 読み出し系（テキスト・revision）の共通土台。path は検証済みであること。
+ *
+ * @param path 検証済みローカル絶対パス
+ * @returns 生バイト列
+ */
+async function readLocalBytes(path: string): Promise<Uint8Array> {
   const handle = await openVerifiedRegularFile(path, fsConstants.O_RDONLY)
   try {
-    const data = await handle.readFile()
-    // サイズ上限は decode 前に判定する（プレビューは緩い上限を options で注入する）。
-    return decodeTextDocument(new Uint8Array(data), readEncoding, options)
+    return new Uint8Array(await handle.readFile())
   } finally {
     await handle.close().catch(() => undefined)
   }
+}
+
+/**
+ * ローカルテキストファイルを読み出し、内容リビジョンも併せて返す。
+ * プレビュー編集が「読込時点の内容」を main 側で覚えるために使う。1 回の read で
+ * document（表示用デコード結果）と revision（生バイト列のハッシュ）を同時に得る。
+ *
+ * @param path ローカル絶対パス
+ * @param encoding 文字コード（未指定は auto）
+ * @param options decode のサイズ上限・超過メッセージ（プレビューは緩い上限を注入する）
+ * @returns デコード済みテキスト・内容リビジョン・生バイト長
+ */
+export async function readLocalTextWithRevision(
+  path: unknown,
+  encoding?: unknown,
+  options?: DecodeOptions
+): Promise<{ document: TextDocument; revision: string; byteLength: number }> {
+  assertLocalPath(path)
+  const readEncoding = resolveReadEncoding(encoding)
+  const data = await readLocalBytes(path)
+  // revision は生バイト列から算出する（decode/encoding に依存しない）。
+  const revision = computeContentRevision(data)
+  // サイズ上限は decode 前に判定する（プレビューは緩い上限を options で注入する）。
+  return { document: decodeTextDocument(data, readEncoding, options), revision, byteLength: data.byteLength }
+}
+
+/**
+ * ローカルファイルの現在の内容リビジョンだけを取得する（保存直前の競合検知用）。
+ * decode しないため、保存対象が編集上限を超えるサイズへ膨らんでいても判定でき、バイナリ判定でも落ちない。
+ *
+ * @param path ローカル絶対パス
+ * @returns 現在の内容リビジョン
+ */
+export async function readLocalRevision(path: unknown): Promise<string> {
+  assertLocalPath(path)
+  return computeContentRevision(await readLocalBytes(path))
 }
 
 /**
@@ -111,6 +155,27 @@ export async function readLocalText(path: unknown, encoding?: unknown, options?:
  * @param bom utf-8 BOM 付与有無
  */
 export async function writeLocalText(path: unknown, text: unknown, encoding?: unknown, bom?: unknown): Promise<void> {
+  await writeLocalTextWithRevision(path, text, encoding, bom)
+}
+
+/**
+ * ローカルテキストファイルへ書き込み、書き込んだ内容のリビジョンを返す。
+ * プレビュー編集の保存後にセッションの基準リビジョンを更新するため、書き込んだバイト列から
+ * そのまま revision を算出する。symlink/TOCTOU 保護つきの open → truncate → write を行う。
+ *
+ * @param path ローカル絶対パス
+ * @param text 保存テキスト
+ * @param encoding 文字コード（未指定は utf-8）
+ * @param bom utf-8 BOM 付与有無
+ * @returns 書き込んだ内容のリビジョンと実際に書き込んだバイト長
+ * @throws テキストが文字列でない、表現不能文字、編集サイズ上限超過の場合
+ */
+export async function writeLocalTextWithRevision(
+  path: unknown,
+  text: unknown,
+  encoding?: unknown,
+  bom?: unknown
+): Promise<{ revision: string; byteLength: number }> {
   assertLocalPath(path)
   if (typeof text !== 'string') throw new Error('Invalid text content.')
   // 表現不能 / サイズ超過は open（truncate）前に弾く。
@@ -122,6 +187,7 @@ export async function writeLocalText(path: unknown, text: unknown, encoding?: un
   } finally {
     await handle.close().catch(() => undefined)
   }
+  return { revision: computeContentRevision(data), byteLength: data.byteLength }
 }
 
 /**
