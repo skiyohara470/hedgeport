@@ -72,6 +72,7 @@ describe('preload api', () => {
     api.openPreview({ source: 'remote', path: '/a.txt', name: 'a.txt', target })
     api.previewMetadata()
     api.loadPreview('shift_jis')
+    api.savePreview({ text: 'x', encoding: 'utf-8', bom: false })
 
     expect(invokeMock).toHaveBeenCalledWith('storage:download', target, '/remote/a.csv', '/local/a.csv')
     expect(invokeMock).toHaveBeenCalledWith('storage:upload', target, '/local/a.csv', '/remote/a.csv')
@@ -118,6 +119,7 @@ describe('preload api', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith('preview:metadata')
     expect(invokeMock).toHaveBeenCalledWith('preview:load', 'shift_jis')
+    expect(invokeMock).toHaveBeenCalledWith('preview:save', { text: 'x', encoding: 'utf-8', bom: false })
   })
 
   it('onHistoryNavigation は購読/解除し、direction だけを listener へ渡す', async () => {

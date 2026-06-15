@@ -4,7 +4,7 @@
  * ファイルを読むためのデータ形状だけをここへ置く（実装は持たない）。
  */
 import type { ConnectionTarget } from './connections'
-import type { TextDocument } from './transfer'
+import type { TextDocument, TextEncoding } from './transfer'
 
 /** プレビュー対象の取得元。 */
 export type PreviewSource = 'local' | 'remote'
@@ -47,7 +47,36 @@ export interface PreviewDocument {
   source: PreviewSource
   /** デコード済みテキストと concrete encoding / BOM。 */
   document: TextDocument
+  /** 読込時点のファイル生バイト長。編集モード可否（編集上限以下か）の判定に使う。 */
+  byteLength: number
 }
+
+/**
+ * プレビュー編集モードの保存要求（renderer → main）。
+ * セキュリティ上、target / path は含めない（main が送信元ウィンドウ束縛のセッションから解決する）。
+ *
+ * 競合上書きは renderer の真偽値では行わせない。競合時に main が発行した
+ * 一回限りの overwriteToken を再保存で添えたときだけ上書きを試みる（任意上書きを禁止する）。
+ */
+export interface PreviewSaveRequest {
+  /** 保存するテキスト。 */
+  text: string
+  /** 保存する文字コード（concrete）。 */
+  encoding: TextEncoding
+  /** utf-8 BOM 付与有無。 */
+  bom: boolean
+  /** 競合時に main が発行した一回限りの上書きトークン（競合確認後の再保存でのみ添える）。 */
+  overwriteToken?: string
+}
+
+/**
+ * プレビュー編集モードの保存結果（main → renderer）。
+ * - saved: 書き込み成功（新しい内容リビジョンと実際に書き込んだバイト長を返す）
+ * - conflict: 読込後にファイルが変更されているため書き込まず、上書き用の一回限りトークンを返す
+ */
+export type PreviewSaveResult =
+  | { status: 'saved'; revision: string; byteLength: number }
+  | { status: 'conflict'; token: string }
 
 /**
  * 値が PreviewSource か判定する型ガード。

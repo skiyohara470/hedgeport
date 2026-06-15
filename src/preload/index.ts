@@ -2,7 +2,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import type { ConnectionTarget } from '../shared/connections'
 import { isHistoryDirection, type HistoryDirection } from '../shared/navigation'
-import type { PreviewDocument, PreviewMeta, PreviewOpenRequest } from '../shared/preview'
+import type {
+  PreviewDocument,
+  PreviewMeta,
+  PreviewOpenRequest,
+  PreviewSaveRequest,
+  PreviewSaveResult,
+} from '../shared/preview'
 import type { AppSettings } from '../shared/settings'
 import type { StorageEntryType } from '../shared/storage'
 import type {
@@ -27,6 +33,8 @@ const api = {
   previewMetadata: (): Promise<PreviewMeta> => ipcRenderer.invoke('preview:metadata'),
   // プレビューウィンドウ自身のセッションを読む。送信元に束縛され、target/secret は返らない。
   loadPreview: (encoding?: ReadEncoding): Promise<PreviewDocument> => ipcRenderer.invoke('preview:load', encoding),
+  // プレビュー編集の保存。送信元束縛のセッションへ書き込む。target/path は渡さず、競合検知は main 側で行う。
+  savePreview: (request: PreviewSaveRequest): Promise<PreviewSaveResult> => ipcRenderer.invoke('preview:save', request),
   listLocal: (path?: string) => ipcRenderer.invoke('local:list', path),
   loadConnections: (): Promise<ConnectionTarget[]> => ipcRenderer.invoke('connections:load'),
   saveConnections: (targets: ConnectionTarget[]): Promise<void> => ipcRenderer.invoke('connections:save', targets),

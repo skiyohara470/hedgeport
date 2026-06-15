@@ -18,7 +18,16 @@ vi.mock('electron', () => ({
 }))
 
 import { MAX_EDITABLE_TEXT_BYTES, MAX_PREVIEW_TEXT_BYTES } from '../shared/transfer'
-import { chooseApplicationAndOpen, openVerifiedRegularFile, readLocalText, writeLocalText } from './fileOpening'
+import {
+  chooseApplicationAndOpen,
+  openVerifiedRegularFile,
+  readLocalRevision,
+  readLocalText,
+  readLocalTextWithRevision,
+  writeLocalText,
+  writeLocalTextWithRevision,
+} from './fileOpening'
+import { computeContentRevision } from './contentRevision'
 
 /** stat/read/write/truncate/close を備えた FileHandle ダブルを作る。 */
 const makeHandle = (overrides: Record<string, unknown> = {}) => ({
@@ -99,6 +108,31 @@ describe('readLocalText / writeLocalText（open handle 経由で TOCTOU 耐性�
     await expect(writeLocalText('/work/link', 'x')).rejects.toThrow('Symlinks cannot be edited')
     openMock.mockRejectedValue(errno('ENOENT'))
     await expect(writeLocalText('/work/missing', 'x')).rejects.toThrow('File not found')
+  })
+
+  it('readLocalTextWithRevision は document/revision/byteLength を返す（revision は生バイト由来）', async () => {
+    const data = Buffer.from('hi')
+    openMock.mockResolvedValue(makeHandle({ readFile: vi.fn().mockResolvedValue(data) }))
+    const result = await readLocalTextWithRevision('/work/a.txt')
+    expect(result.document).toEqual({ text: 'hi', encoding: 'utf-8', bom: false })
+    expect(result.byteLength).toBe(2)
+    expect(result.revision).toBe(computeContentRevision(new Uint8Array(data)))
+  })
+
+  it('readLocalRevision は現在の内容リビジョンだけを返す（decode しない）', async () => {
+    // NUL を含む（テキストとしては読めない）バイト列でも revision は取れる。
+    const data = Buffer.from([0x00, 0x01, 0x02])
+    openMock.mockResolvedValue(makeHandle({ readFile: vi.fn().mockResolvedValue(data) }))
+    await expect(readLocalRevision('/work/bin')).resolves.toBe(computeContentRevision(new Uint8Array(data)))
+  })
+
+  it('writeLocalTextWithRevision は書き込んだ内容の revision と byteLength を返す', async () => {
+    const handle = makeHandle()
+    openMock.mockResolvedValue(handle)
+    const result = await writeLocalTextWithRevision('/work/a.txt', 'hi', 'utf-8', false)
+    const written = handle.writeFile.mock.calls[0][0] as Uint8Array
+    expect(result.revision).toBe(computeContentRevision(written))
+    expect(result.byteLength).toBe(written.byteLength)
   })
 })
 
