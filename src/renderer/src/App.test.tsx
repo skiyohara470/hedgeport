@@ -116,6 +116,24 @@ describe('App settings', () => {
     expect(document.documentElement.getAttribute('data-density')).toBe('comfortable')
   })
 
+  it('platform / 全画面状態をルート要素へ反映する（macOS タイトルバー出し分け）', async () => {
+    let fullScreenListener: ((full: boolean) => void) | undefined
+    const onFullScreenChange = vi.fn((listener: (full: boolean) => void) => {
+      fullScreenListener = listener
+      return () => undefined
+    })
+    setupApi({ platform: 'darwin' as unknown as ReturnType<typeof vi.fn>, onFullScreenChange }, [])
+    render(<App />)
+
+    await waitFor(() => expect(document.documentElement.getAttribute('data-platform')).toBe('darwin'))
+    // 全画面通知で data-fullscreen が切り替わる。
+    expect(document.documentElement.hasAttribute('data-fullscreen')).toBe(false)
+    fullScreenListener?.(true)
+    await waitFor(() => expect(document.documentElement.getAttribute('data-fullscreen')).toBe('true'))
+    fullScreenListener?.(false)
+    await waitFor(() => expect(document.documentElement.hasAttribute('data-fullscreen')).toBe(false))
+  })
+
   it('設定ロード失敗時は既定で起動し通知を表示する', async () => {
     const loadSettings = vi.fn().mockRejectedValue(new Error('corrupted'))
     setupApi({ loadSettings }, [sftp('a')])

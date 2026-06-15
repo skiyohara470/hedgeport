@@ -24,6 +24,22 @@ describe('styles.css theme contract', () => {
     expect(css).toMatch(/\.connection-screen\s*\{[^}]*var\(--c-screen-glow\)/)
   })
 
+  it('macOS 統合タイトルバー: 上端バーは drag、操作要素は no-drag、traffic light 余白と全画面リセットを持つ', () => {
+    // 上端バーをドラッグ領域にする（mac 限定）。
+    expect(css).toMatch(/\[data-platform='darwin'\][^{]*\.workspace-bar[^{]*\{[^}]*-webkit-app-region:\s*drag/)
+    // 操作要素は no-drag（drag 領域内でもクリックできる）。
+    expect(css).toMatch(/\[data-platform='darwin'\][^{]*button[^{]*\{[^}]*-webkit-app-region:\s*no-drag/)
+    // traffic lights と重ならない左余白。
+    expect(css).toMatch(/\[data-platform='darwin'\]\s*\.workspace-bar\s*\{[^}]*padding-left/)
+    // 全画面では左余白を畳む。
+    expect(css).toMatch(/\[data-platform='darwin'\]\[data-fullscreen='true'\]/)
+  })
+
+  it('チェックボックスは appearance:none で theme token 描画し、forced-colors で native へ戻す', () => {
+    expect(css).toMatch(/\.checkbox-cell input\[type='checkbox'\]\s*\{[^}]*appearance:\s*none/)
+    expect(css).toMatch(/@media \(forced-colors: active\)/)
+  })
+
   it('light テーマが card / text / surface / 装飾トークンを上書きする', () => {
     const light = css.match(/:root\[data-theme='light'\]\s*\{([^}]*)\}/)?.[1] ?? ''
     for (const token of [

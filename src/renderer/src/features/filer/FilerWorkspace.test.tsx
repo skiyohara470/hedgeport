@@ -798,6 +798,27 @@ describe('FilerWorkspace ファイル操作', () => {
     expect(screen.queryByLabelText('File contents')).toBeNull()
   })
 
+  it('チェックボックスはセル(label)全体のクリックで選択でき、行 open へ二重発火しない', async () => {
+    const readText = vi.fn().mockResolvedValue({ text: 'remote body', encoding: 'utf-8', bom: false })
+    await renderWorkspace({ readText })
+
+    const input = screen.getByLabelText('Select a.txt') as HTMLInputElement
+    // input そのものではなく、それを包む hit area（label）をクリックする。
+    const label = input.closest('label') as HTMLLabelElement
+    expect(label).toBeTruthy()
+
+    fireEvent.click(label)
+    expect(input.checked).toBe(true)
+    expect(screen.getByRole('row', { selected: true })).toBeTruthy()
+    // checkbox 由来なので行 open は起きない。
+    expect(readText).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('File contents')).toBeNull()
+
+    // もう一度で解除（行クリック置換ではなく toggle 挙動）。
+    fireEvent.click(label)
+    expect(input.checked).toBe(false)
+  })
+
   it('エディタモーダルは移動・リサイズ用の構造を持ち、初期は中央配置される', async () => {
     await renderWorkspace()
 
