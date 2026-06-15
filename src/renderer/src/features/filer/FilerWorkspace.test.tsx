@@ -682,9 +682,10 @@ describe('FilerWorkspace ファイル操作', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     await renderWorkspace({ readText, writeText })
 
-    const remoteRow = screen.getByText('a.txt').closest('tr')!
-    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
 
     const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
     expect(textarea.value).toBe('first line')
@@ -709,9 +710,10 @@ describe('FilerWorkspace ファイル操作', () => {
       .mockRejectedValue(new Error('File looks binary (contains NUL) and cannot be edited as text.'))
     await renderWorkspace({ readText })
 
-    const remoteRow = screen.getByText('a.txt').closest('tr')!
-    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
 
     expect(await screen.findByText(/looks binary/)).toBeTruthy()
   })
@@ -721,9 +723,10 @@ describe('FilerWorkspace ファイル操作', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     await renderWorkspace({ readText, writeText })
 
-    const remoteRow = screen.getByText('a.txt').closest('tr')!
-    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
 
     const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
     expect((screen.getByLabelText('UTF-8 BOM') as HTMLInputElement).checked).toBe(true)
@@ -798,9 +801,10 @@ describe('FilerWorkspace ファイル操作', () => {
   it('エディタモーダルは移動・リサイズ用の構造を持ち、初期は中央配置される', async () => {
     await renderWorkspace()
 
-    // Built-in Editor は context menu の Open（既定アクション）で開く。
-    fireEvent.contextMenu(screen.getByText('a.txt').closest('tr')!, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
     await screen.findByLabelText('File contents')
 
     const modal = document.querySelector('.editor-modal-floating') as HTMLElement
@@ -818,8 +822,10 @@ describe('FilerWorkspace ファイル操作', () => {
   it('ヘッダのタイトルドラッグでモーダルを移動し、画面外はクランプする', async () => {
     await renderWorkspace()
 
-    fireEvent.contextMenu(screen.getByText('a.txt').closest('tr')!, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
     await screen.findByLabelText('File contents')
     const modal = document.querySelector('.editor-modal-floating') as HTMLElement
     const handle = modal.querySelector('.editor-drag-handle') as HTMLElement
@@ -845,8 +851,10 @@ describe('FilerWorkspace ファイル操作', () => {
   it('ドラッグ中にエディタを閉じても window リスナーが残らない', async () => {
     await renderWorkspace()
 
-    fireEvent.contextMenu(screen.getByText('a.txt').closest('tr')!, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
     await screen.findByLabelText('File contents')
     const modal = document.querySelector('.editor-modal-floating') as HTMLElement
     const handle = modal.querySelector('.editor-drag-handle') as HTMLElement
@@ -870,9 +878,10 @@ describe('FilerWorkspace ファイル操作', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     await renderWorkspace({ readText, writeText })
 
-    const remoteRow = screen.getByText('a.txt').closest('tr')!
-    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
 
     await screen.findByLabelText('File contents')
     // 初回は auto 要求。NEVER save with auto: 検出された concrete (shift_jis) を select に表示する。
@@ -902,9 +911,10 @@ describe('FilerWorkspace ファイル操作', () => {
     })
     await renderWorkspace({ readText })
 
-    const remoteRow = screen.getByText('a.txt').closest('tr')!
-    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
 
     // modal は閉じず、文字コード選択を促すエラー + encoding select が出る。
     expect(await screen.findByText(/not valid UTF-8/)).toBeTruthy()
@@ -923,9 +933,10 @@ describe('FilerWorkspace ファイル操作', () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await renderWorkspace({ readText, writeText })
 
-    const remoteRow = screen.getByText('a.txt').closest('tr')!
-    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // 既定 Open は Preview のため、Built-in Editor は Open… > Built-in Editor から開く。
+    fireEvent.click(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open with…' })[0])
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
 
     const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'edited' } })
@@ -1329,15 +1340,74 @@ describe('FilerWorkspace ファイル操作', () => {
     await waitFor(() => expect(chooseApplication).toHaveBeenCalledWith('/work/draft.txt'))
   })
 
-  it('ローカルファイルの既定 Open（Enter/context menu）は System Default で開く', async () => {
+  it('リモートの既定 Open（context menu / Enter / toolbar eye）はすべて Preview を開き Built-in は開かない', async () => {
+    const openPreview = vi.fn().mockResolvedValue(undefined)
+    const readText = vi.fn().mockResolvedValue({ text: 'x', encoding: 'utf-8', bom: false })
+    await renderWorkspace({ openPreview, readText })
+
+    const row = () => screen.getByText('a.txt').closest('tr')!
+    // context menu の Open。
+    fireEvent.contextMenu(row(), { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    // Enter（行選択 + window keydown、remote pane が既定 focus）。
+    fireEvent.click(row())
+    fireEvent.keyDown(window, { key: 'Enter' })
+    // toolbar eye 本体。
+    fireEvent.click(row())
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open' })[0])
+
+    await waitFor(() => expect(openPreview).toHaveBeenCalledTimes(3))
+    expect(openPreview).toHaveBeenCalledWith({
+      source: 'remote',
+      target: expect.objectContaining({ id: 'sftp-1' }),
+      path: '/a.txt',
+      name: 'a.txt',
+    })
+    // Built-in Editor（read）は開かない。
+    expect(readText).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('File contents')).toBeNull()
+  })
+
+  it('ローカルの既定 Open（context menu）は Preview を開き System Default は呼ばない', async () => {
+    const openPreview = vi.fn().mockResolvedValue(undefined)
     const openLocalPath = vi.fn().mockResolvedValue(undefined)
-    await renderWorkspace({ openLocalPath })
+    await renderWorkspace({ openPreview, openLocalPath })
 
     const draftRow = screen.getByText('draft.txt').closest('tr')!
     fireEvent.contextMenu(draftRow, { clientX: 10, clientY: 10 })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
 
+    await waitFor(() =>
+      expect(openPreview).toHaveBeenCalledWith({ source: 'local', path: '/work/draft.txt', name: 'draft.txt' })
+    )
+    expect(openLocalPath).not.toHaveBeenCalled()
+  })
+
+  it('ローカルの System Default は Open… > System Default から開ける（回帰）', async () => {
+    const openLocalPath = vi.fn().mockResolvedValue(undefined)
+    await renderWorkspace({ openLocalPath })
+
+    const draftRow = screen.getByText('draft.txt').closest('tr')!
+    fireEvent.contextMenu(draftRow, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open… Ctrl+Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /System Default App/ }))
+
     await waitFor(() => expect(openLocalPath).toHaveBeenCalledWith('/work/draft.txt'))
+  })
+
+  it('ディレクトリの context menu Open はペイン内移動する（回帰）', async () => {
+    const listStorage = vi
+      .fn()
+      .mockResolvedValueOnce([{ name: 'sub', path: '/sub', type: 'directory' }])
+      .mockResolvedValueOnce([{ name: 'inner.txt', path: '/sub/inner.txt', type: 'file' }])
+    const openPreview = vi.fn().mockResolvedValue(undefined)
+    await renderWorkspace({ listStorage, openPreview })
+
+    fireEvent.contextMenu(screen.getByText('sub').closest('tr')!, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+
+    expect(await screen.findByText('inner.txt')).toBeTruthy()
+    expect(openPreview).not.toHaveBeenCalled()
   })
 
   it('検索ツールバーが各ペインに存在する（固定バー構造）', async () => {

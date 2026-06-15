@@ -144,12 +144,13 @@ describe('FilerWorkspace mouse navigation', () => {
     const { ipcNavigate } = setup({ readText })
     fireEvent.doubleClick((await screen.findByText('a')).closest('tr')!)
     await screen.findByText('b')
-    // built-in editor（aria-modal）を開く。leaf を開くため /a/b へ入り、context menu の Open を使う
-    //（ファイルのダブルクリックは独立プレビューを開くため、in-DOM の aria-modal にはならない）。
+    // built-in editor（aria-modal）を開く。leaf を開くため /a/b へ入り、Open… > Built-in Editor を使う
+    //（ファイルの既定 Open は独立プレビューを開くため、in-DOM の aria-modal にはならない）。
     fireEvent.doubleClick((await screen.findByText('b')).closest('tr')!)
     const leafRow = (await screen.findByText('leaf.txt')).closest('tr')!
     fireEvent.contextMenu(leafRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open… Ctrl+Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
     await screen.findByLabelText('File contents')
     remoteList.mockClear()
 
