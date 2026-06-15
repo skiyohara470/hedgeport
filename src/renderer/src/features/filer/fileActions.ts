@@ -142,12 +142,17 @@ const ORDER: Record<'remote' | 'local', FileActionId[]> = {
 }
 
 /**
- * 入力要素（input / textarea / contenteditable）にフォーカスがあるか。
+ * 入力要素（input / textarea / select / contenteditable）にフォーカスがあるか。
  * グローバルショートカットを入力中に発火させないために使う。
  */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
-  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable === true
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable === true
+  )
 }
 
 /**

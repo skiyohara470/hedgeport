@@ -1,4 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from 'react'
 
 import {
   TEXT_ENCODINGS,
@@ -10,7 +21,9 @@ import {
   type TextEncoding,
 } from '../../../../shared/transfer'
 import type { StorageEntry } from '../../../../shared/storage'
+import type { HistoryDirection } from '../../../../shared/navigation'
 import { createDefaultSettings, type AppSettings, type Language } from '../../../../shared/settings'
+import { mouseButtonDirection, reduceNavigation, type LastNavigation } from './mouseNavigation'
 import { Icon, type IconName } from '../icons/Icon'
 import { useTranslation } from '../i18n/I18nContext'
 import { resolveMessage, type Message, type TranslationKey, type TranslationParams } from '../i18n/translations'
@@ -46,6 +59,21 @@ import { activateTab, closeTab, openTab, type TabsState } from './tabsModel'
 
 /** ペイン種別。 */
 type PaneKind = 'remote' | 'local'
+
+/**
+ * 各ペインが公開する命令ハンドル。親はこれを通じて focus 中ペインの履歴だけを動かす。
+ * navigate は非同期遷移の完了で解決し、親はこれを待って次の入力を逐次処理する。
+ */
+interface PaneHandle {
+  navigate: (direction: HistoryDirection) => Promise<void>
+}
+
+/** main / DOM から受けたナビゲーション入力（キュー要素）。発生時点の宛先を固定する。 */
+interface NavigationItem {
+  direction: HistoryDirection
+  pane: PaneKind
+  tabId: string
+}
 
 /** ファイル操作のアクション実行ハンドラ（選択全体に作用する）。 */
 type ActionHandler = (id: FileActionId, selection: StorageEntry[]) => void
@@ -774,31 +802,37 @@ function FileTable({
  * パス移動と戻る/進む履歴を持ち、target 切替時にルートから再ロードする。
  * ファイル操作（開く / ダウンロード / 削除）は親から渡されたハンドラへ委譲する。
  */
-export function RemoteFilePane({
-  target,
-  onAction = () => undefined,
-  onCurrentPathChange,
-  onFocusPane,
-  onOpenWith,
-  canDownloadToLocal = false,
-  hasClipboard = false,
-  busy = false,
-  keyboardActive = false,
-  showHiddenFiles = false,
-  reloadToken = 0,
-}: {
-  target: ConnectionTarget
-  onAction?: ActionHandler
-  onCurrentPathChange?: (path: string) => void
-  onFocusPane?: () => void
-  onOpenWith?: OpenWithHandler
-  canDownloadToLocal?: boolean
-  hasClipboard?: boolean
-  busy?: boolean
-  keyboardActive?: boolean
-  showHiddenFiles?: boolean
-  reloadToken?: number
-}) {
+export const RemoteFilePane = forwardRef<
+  PaneHandle,
+  {
+    target: ConnectionTarget
+    onAction?: ActionHandler
+    onCurrentPathChange?: (path: string) => void
+    onFocusPane?: () => void
+    onOpenWith?: OpenWithHandler
+    canDownloadToLocal?: boolean
+    hasClipboard?: boolean
+    busy?: boolean
+    keyboardActive?: boolean
+    showHiddenFiles?: boolean
+    reloadToken?: number
+  }
+>(function RemoteFilePane(
+  {
+    target,
+    onAction = () => undefined,
+    onCurrentPathChange,
+    onFocusPane,
+    onOpenWith,
+    canDownloadToLocal = false,
+    hasClipboard = false,
+    busy = false,
+    keyboardActive = false,
+    showHiddenFiles = false,
+    reloadToken = 0,
+  },
+  ref
+) {
   const { t } = useTranslation()
   const [path, setPath] = useState('/')
   const [entries, setEntries] = useState<StorageEntry[]>([])
@@ -807,42 +841,60 @@ export function RemoteFilePane({
   const [backStack, setBackStack] = useState<string[]>([])
   const [forwardStack, setForwardStack] = useState<string[]>([])
   const pathRef = useRef(path)
+  // 履歴とガード状態は ref でも保持し、連続入力（burst）でも同期的に最新値で判定・更新する。
+  const backStackRef = useRef<string[]>([])
+  const forwardStackRef = useRef<string[]>([])
+  const loadingRef = useRef(true)
+  const errorRef = useRef<Message | null>(null)
 
   /**
-   * リモート一覧を読み込み、履歴種別に応じて back/forward stack を更新する。
+   * リモート一覧を読み込む。path / 履歴（back/forward stack）/ entries は read 成功時にのみ
+   * 確定する（commit-on-success）。失敗時は現在地・履歴・表示をすべて保持し、error だけを立てる。
+   * これにより list が reject しても breadcrumb / entries / 履歴が不整合にならず、再操作も可能。
+   * キューが 1 件ずつ await するため、成功時の同期 ref 更新で連続ナビゲーション（burst）も整合する。
    */
   const loadDirectory = async (
     nextPath: string,
     history: 'push' | 'replace' | 'back' | 'forward' = 'replace'
   ): Promise<void> => {
+    const currentPath = pathRef.current
+    loadingRef.current = true
+    setIsLoading(true)
+    errorRef.current = null
+    setError(null)
     try {
-      setIsLoading(true)
-      setError(null)
-      const currentPath = pathRef.current
       const nextEntries = await window.hedgeport.listStorage(target, nextPath)
+      // ここから先は成功確定。履歴 stack と path / entries を一括で確定する。
       if (history === 'push' && currentPath !== nextPath) {
-        setBackStack((current) => [...current, currentPath])
-        setForwardStack([])
+        backStackRef.current = [...backStackRef.current, currentPath]
+        forwardStackRef.current = []
       } else if (history === 'back') {
-        setBackStack((current) => current.slice(0, -1))
-        setForwardStack((current) => [...current, currentPath])
+        backStackRef.current = backStackRef.current.slice(0, -1)
+        forwardStackRef.current = [...forwardStackRef.current, currentPath]
       } else if (history === 'forward') {
-        setForwardStack((current) => current.slice(0, -1))
-        setBackStack((current) => [...current, currentPath])
+        forwardStackRef.current = forwardStackRef.current.slice(0, -1)
+        backStackRef.current = [...backStackRef.current, currentPath]
       }
+      setBackStack(backStackRef.current)
+      setForwardStack(forwardStackRef.current)
       pathRef.current = nextPath
       setPath(nextPath)
       setEntries(nextEntries)
       // 親が転送先（アップロード先）を決められるよう、現在のリモートディレクトリを伝える。
       onCurrentPathChange?.(nextPath)
     } catch (reason) {
-      setError(reason instanceof Error ? { raw: reason.message } : { key: 'pane.couldNotList' })
+      const message: Message = reason instanceof Error ? { raw: reason.message } : { key: 'pane.couldNotList' }
+      errorRef.current = message
+      setError(message)
     } finally {
+      loadingRef.current = false
       setIsLoading(false)
     }
   }
 
   useEffect(() => {
+    backStackRef.current = []
+    forwardStackRef.current = []
     setBackStack([])
     setForwardStack([])
     pathRef.current = '/'
@@ -858,10 +910,34 @@ export function RemoteFilePane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadToken])
 
+  /**
+   * 1 つ前のディレクトリへ戻る。ヘッダボタンも外部（マウス）要求も必ずこれを呼ぶ（履歴処理を複製しない）。
+   * ガード / 履歴は ref で同期判定するため、連続入力でも 1 入力ごとに 1 段移動する。
+   * 履歴なし / loading 中は no-op。error 中でも戻れる（known-good な履歴へ移り、error を解消できる）。
+   */
+  const navigateBack = (): Promise<void> => {
+    if (loadingRef.current || backStackRef.current.length === 0) return Promise.resolve()
+    const previous = backStackRef.current.at(-1)
+    return previous ? loadDirectory(previous, 'back') : Promise.resolve()
+  }
+  /** 1 つ先のディレクトリへ進む。条件は navigateBack と対称。 */
+  const navigateForward = (): Promise<void> => {
+    if (loadingRef.current || forwardStackRef.current.length === 0) return Promise.resolve()
+    const next = forwardStackRef.current.at(-1)
+    return next ? loadDirectory(next, 'forward') : Promise.resolve()
+  }
+
+  // 親（FilerWorkspace）が focus 中ペインの履歴を動かすための命令ハンドル。
+  // ヘッダボタンと同じ navigate 関数を使い、未知方向は no-op。
+  useImperativeHandle(ref, () => ({
+    navigate: (direction: HistoryDirection) =>
+      direction === 'back' ? navigateBack() : direction === 'forward' ? navigateForward() : Promise.resolve(),
+  }))
+
   const parent = parentPath(path)
 
   return (
-    <section className="file-pane">
+    <section className="file-pane" onPointerDown={() => onFocusPane?.()}>
       <header className="pane-header">
         <span>{target.name}</span>
         <div className="pane-header-tools">
@@ -886,10 +962,7 @@ export function RemoteFilePane({
             disabled={isLoading || backStack.length === 0}
             aria-label={t('pane.back')}
             title={t('pane.back')}
-            onClick={() => {
-              const previous = backStack.at(-1)
-              if (previous) void loadDirectory(previous, 'back')
-            }}
+            onClick={navigateBack}
           >
             <Icon name="back" />
           </button>
@@ -899,10 +972,7 @@ export function RemoteFilePane({
             disabled={isLoading || forwardStack.length === 0}
             aria-label={t('pane.forward')}
             title={t('pane.forward')}
-            onClick={() => {
-              const next = forwardStack.at(-1)
-              if (next) void loadDirectory(next, 'forward')
-            }}
+            onClick={navigateForward}
           >
             <Icon name="forward" />
           </button>
@@ -958,73 +1028,97 @@ export function RemoteFilePane({
       )}
     </section>
   )
-}
+})
 
 /**
  * ローカルファイル側のペイン。
  * 現在パスを target.lastLocalPath へ反映できるよう、親へ更新を返す。
  */
-function LocalFilePane({
-  target,
-  onRememberPath,
-  onAction = () => undefined,
-  onOpenWith,
-  onFocusPane,
-  hasClipboard = false,
-  busy = false,
-  keyboardActive = false,
-  showHiddenFiles = false,
-  reloadToken = 0,
-}: {
-  target: ConnectionTarget
-  onRememberPath: (path: string) => void
-  onAction?: ActionHandler
-  onOpenWith?: OpenWithHandler
-  onFocusPane?: () => void
-  hasClipboard?: boolean
-  busy?: boolean
-  keyboardActive?: boolean
-  showHiddenFiles?: boolean
-  reloadToken?: number
-}) {
+const LocalFilePane = forwardRef<
+  PaneHandle,
+  {
+    target: ConnectionTarget
+    onRememberPath: (path: string) => void
+    onAction?: ActionHandler
+    onOpenWith?: OpenWithHandler
+    onFocusPane?: () => void
+    hasClipboard?: boolean
+    busy?: boolean
+    keyboardActive?: boolean
+    showHiddenFiles?: boolean
+    reloadToken?: number
+  }
+>(function LocalFilePane(
+  {
+    target,
+    onRememberPath,
+    onAction = () => undefined,
+    onOpenWith,
+    onFocusPane,
+    hasClipboard = false,
+    busy = false,
+    keyboardActive = false,
+    showHiddenFiles = false,
+    reloadToken = 0,
+  },
+  ref
+) {
   const { t } = useTranslation()
   const [directory, setDirectory] = useState<LocalDirectory | null>(null)
   const [error, setError] = useState<Message | null>(null)
   const [backStack, setBackStack] = useState<string[]>([])
   const [forwardStack, setForwardStack] = useState<string[]>([])
   const pathRef = useRef(target.lastLocalPath ?? '/')
+  const backStackRef = useRef<string[]>([])
+  const forwardStackRef = useRef<string[]>([])
+  const errorRef = useRef<Message | null>(null)
+  const loadingRef = useRef(true)
 
   /**
-   * ローカル一覧を読み込み、現在パスと履歴を同期する。
+   * ローカル一覧を読み込む。履歴 / pathRef / directory は read 成功時にのみ確定する
+   * （commit-on-success）。履歴は listLocal が解決した実パス（nextDirectory.path）で更新する。
+   * 失敗時は現在地・履歴・表示を保持し error だけを立てるため、breadcrumb / directory と
+   * 履歴が不整合にならず再操作も可能。成功時の同期 ref 更新で連続ナビゲーションも整合する。
    */
   const loadDirectory = async (
     path?: string,
     history: 'push' | 'replace' | 'back' | 'forward' = 'replace'
   ): Promise<void> => {
+    const currentPath = pathRef.current
+    loadingRef.current = true
+    errorRef.current = null
+    setError(null)
     try {
-      setError(null)
-      const currentPath = pathRef.current
       const nextDirectory = await window.hedgeport.listLocal(path)
       const nextPath = nextDirectory.path
+      // ここから先は成功確定。解決後の実パスで履歴 stack と pathRef / directory を確定する。
       if (history === 'push' && currentPath !== nextPath) {
-        setBackStack((current) => [...current, currentPath])
-        setForwardStack([])
+        backStackRef.current = [...backStackRef.current, currentPath]
+        forwardStackRef.current = []
       } else if (history === 'back') {
-        setBackStack((current) => current.slice(0, -1))
-        setForwardStack((current) => [...current, currentPath])
+        backStackRef.current = backStackRef.current.slice(0, -1)
+        forwardStackRef.current = [...forwardStackRef.current, currentPath]
       } else if (history === 'forward') {
-        setForwardStack((current) => current.slice(0, -1))
-        setBackStack((current) => [...current, currentPath])
+        forwardStackRef.current = forwardStackRef.current.slice(0, -1)
+        backStackRef.current = [...backStackRef.current, currentPath]
       }
+      setBackStack(backStackRef.current)
+      setForwardStack(forwardStackRef.current)
       pathRef.current = nextPath
       setDirectory(nextDirectory)
       onRememberPath(nextPath)
     } catch (reason) {
-      setError(reason instanceof Error ? { raw: reason.message } : { key: 'pane.couldNotRead' })
+      const message: Message = reason instanceof Error ? { raw: reason.message } : { key: 'pane.couldNotRead' }
+      errorRef.current = message
+      setError(message)
+    } finally {
+      loadingRef.current = false
     }
   }
 
   useEffect(() => {
+    backStackRef.current = []
+    forwardStackRef.current = []
     setBackStack([])
     setForwardStack([])
     pathRef.current = target.lastLocalPath ?? '/'
@@ -1040,8 +1134,31 @@ function LocalFilePane({
   const currentPath = directory?.path ?? pathRef.current
   const parent = parentPath(currentPath)
 
+  /**
+   * 1 つ前のディレクトリへ戻る（ヘッダボタンと外部要求が共有）。
+   * ガード / 履歴は ref で同期判定し、連続入力でも 1 入力ごとに 1 段移動する。loading 中は no-op。
+   * error 中でも戻れる（known-good な履歴へ移り error を解消できる）。
+   */
+  const navigateBack = (): Promise<void> => {
+    if (loadingRef.current || backStackRef.current.length === 0) return Promise.resolve()
+    const previous = backStackRef.current.at(-1)
+    return previous ? loadDirectory(previous, 'back') : Promise.resolve()
+  }
+  /** 1 つ先のディレクトリへ進む。 */
+  const navigateForward = (): Promise<void> => {
+    if (loadingRef.current || forwardStackRef.current.length === 0) return Promise.resolve()
+    const next = forwardStackRef.current.at(-1)
+    return next ? loadDirectory(next, 'forward') : Promise.resolve()
+  }
+
+  // 親（FilerWorkspace）が focus 中ペインの履歴を動かすための命令ハンドル。
+  useImperativeHandle(ref, () => ({
+    navigate: (direction: HistoryDirection) =>
+      direction === 'back' ? navigateBack() : direction === 'forward' ? navigateForward() : Promise.resolve(),
+  }))
+
   return (
-    <section className="file-pane">
+    <section className="file-pane" onPointerDown={() => onFocusPane?.()}>
       <header className="pane-header">
         <span>{t('pane.localFiles')}</span>
         <div className="pane-header-tools">
@@ -1063,26 +1180,20 @@ function LocalFilePane({
           <button
             className="pane-header-button"
             type="button"
-            disabled={backStack.length === 0 || Boolean(error)}
+            disabled={backStack.length === 0}
             aria-label={t('pane.back')}
             title={t('pane.back')}
-            onClick={() => {
-              const previous = backStack.at(-1)
-              if (previous) void loadDirectory(previous, 'back')
-            }}
+            onClick={navigateBack}
           >
             <Icon name="back" />
           </button>
           <button
             className="pane-header-button"
             type="button"
-            disabled={forwardStack.length === 0 || Boolean(error)}
+            disabled={forwardStack.length === 0}
             aria-label={t('pane.forward')}
             title={t('pane.forward')}
-            onClick={() => {
-              const next = forwardStack.at(-1)
-              if (next) void loadDirectory(next, 'forward')
-            }}
+            onClick={navigateForward}
           >
             <Icon name="forward" />
           </button>
@@ -1135,7 +1246,7 @@ function LocalFilePane({
       )}
     </section>
   )
-}
+})
 
 /**
  * 未接続タブ向けの接続選択ラッパー。
@@ -1300,6 +1411,83 @@ export function FilerWorkspace({
   }
 
   const activeTarget = tabs.activeId ? tabTargets[tabs.activeId] : null
+
+  // 各ペインへの命令ハンドル（focus 中ペインの履歴だけを動かすため imperative に保持）。
+  const remotePaneRef = useRef<PaneHandle | null>(null)
+  const localPaneRef = useRef<PaneHandle | null>(null)
+  // ナビゲーション入力のキュー（順序保持し、非同期遷移を 1 件ずつ処理する）と重複抑止状態。
+  const navQueueRef = useRef<NavigationItem[]>([])
+  const navRunningRef = useRef(false)
+  const lastNavRef = useRef<LastNavigation | null>(null)
+  // 非同期処理中も最新の focus / active tab を参照するための ref。
+  const focusedPaneRef = useRef(focusedPane)
+  focusedPaneRef.current = focusedPane
+  const activeIdRef = useRef(tabs.activeId)
+  activeIdRef.current = tabs.activeId
+
+  // キューを 1 件ずつ処理する。発生時点で固定した pane/tab が今も有効なときだけ、その pane を動かす。
+  const drainNavQueue = useCallback(async (): Promise<void> => {
+    if (navRunningRef.current) return
+    navRunningRef.current = true
+    try {
+      let item = navQueueRef.current.shift()
+      while (item) {
+        // タブが切り替わっていたら、別タブの履歴は動かさない。
+        if (item.tabId === activeIdRef.current) {
+          const handle = item.pane === 'remote' ? remotePaneRef.current : localPaneRef.current
+          // 対象ペインが未マウント（local 非表示等）なら no-op。
+          if (handle) await handle.navigate(item.direction)
+        }
+        item = navQueueRef.current.shift()
+      }
+    } finally {
+      navRunningRef.current = false
+    }
+  }, [])
+
+  /**
+   * 履歴ナビゲーション要求を受け、発生時点の focus 中ペイン / active tab を宛先に固定してキューへ積む。
+   * dialog（aria-modal）表示中 / 入力フォーカス中 / 未接続では no-op。
+   * IPC と DOM が同一物理入力を二重通知する環境では同方向・別 source の短時間重複だけ落とす。
+   */
+  const requestNavigate = useCallback(
+    (direction: HistoryDirection, source: 'ipc' | 'dom'): void => {
+      if (!activeIdRef.current || !(activeIdRef.current && tabTargets[activeIdRef.current])) return
+      // editor / name dialog / settings / open-with など開いている aria-modal があれば無視。
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      if (isTypingTarget(document.activeElement)) return
+      // dedupe: accept/reject に関わらず観測を記録する（reduceNavigation）。
+      // こうしないと二重通知の片方を落とした後、直後の同 source 正規入力まで誤って落としてしまう。
+      const { accept, last } = reduceNavigation(lastNavRef.current, { direction, source }, Date.now())
+      lastNavRef.current = last
+      if (!accept) return
+      navQueueRef.current.push({ direction, pane: focusedPaneRef.current, tabId: activeIdRef.current })
+      void drainNavQueue()
+    },
+    [drainNavQueue, tabTargets]
+  )
+
+  // main（マウス戻る/進む・swipe）からの履歴ナビゲーションを購読する。
+  useEffect(() => {
+    const unsubscribe = window.hedgeport.onHistoryNavigation?.((direction) => requestNavigate(direction, 'ipc'))
+    return () => unsubscribe?.()
+  }, [requestNavigate])
+
+  // 補助マウスボタン（button 3/4）が DOM MouseEvent としてのみ来る環境にも対応し、既定動作を抑止する。
+  useEffect(() => {
+    const handler = (event: globalThis.MouseEvent): void => {
+      const direction = mouseButtonDirection(event.button)
+      if (!direction) return
+      // Chromium 既定の履歴移動は常に抑止する（入力要素上でも誤遷移させない）。
+      event.preventDefault()
+      // mousedown 時点では focus がまだ移っておらず activeElement では拾えないため、
+      // event.target が入力要素ならナビゲーションせず抑止だけ行う（activeElement 判定は requestNavigate 側で維持）。
+      if (isTypingTarget(event.target)) return
+      requestNavigate(direction, 'dom')
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [requestNavigate])
 
   // アクティブタブの接続先が変わったら、ペイン位置と転送状態をリセットする。
   useEffect(() => {
@@ -2282,6 +2470,7 @@ export function FilerWorkspace({
         >
           <RemoteFilePane
             key={`${tabs.activeId}-${activeTarget.id}`}
+            ref={remotePaneRef}
             target={activeTarget}
             onAction={handleRemoteAction}
             onOpenWith={(mode, entry) => handleOpenWith('remote', mode, entry)}
@@ -2311,6 +2500,7 @@ export function FilerWorkspace({
               />
               {activeTarget && (
                 <LocalFilePane
+                  ref={localPaneRef}
                   target={activeTarget}
                   onRememberPath={rememberLocalPath}
                   onAction={handleLocalAction}

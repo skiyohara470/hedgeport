@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import type { ConnectionTarget } from '../shared/connections'
+import { isHistoryDirection, type HistoryDirection } from '../shared/navigation'
 import type { AppSettings } from '../shared/settings'
 import type { StorageEntryType } from '../shared/storage'
 import type {
@@ -28,6 +29,15 @@ const api = {
   testConnection: (target: ConnectionTarget) => ipcRenderer.invoke('connections:test', target),
   loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:save', settings),
+  // マウス戻る/進む（main で捕捉）を購読する。direction だけを renderer へ渡し、解除関数を返す。
+  onHistoryNavigation: (listener: (direction: HistoryDirection) => void): (() => void) => {
+    // 不正な IPC ペイロードを listener へ渡さない（back/forward 以外は破棄）。
+    const handler = (_event: IpcRendererEvent, direction: unknown): void => {
+      if (isHistoryDirection(direction)) listener(direction)
+    }
+    ipcRenderer.on('history:navigate', handler)
+    return () => ipcRenderer.removeListener('history:navigate', handler)
+  },
   listStorage: (target: ConnectionTarget, path: string) => ipcRenderer.invoke('storage:list', target, path),
   downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string): Promise<void> =>
     ipcRenderer.invoke('storage:download', target, remotePath, localPath),

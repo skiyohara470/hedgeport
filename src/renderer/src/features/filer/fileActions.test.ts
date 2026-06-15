@@ -63,9 +63,15 @@ describe('shortcutLabel / menuItem', () => {
 })
 
 describe('isTypingTarget', () => {
-  it('input/textarea を入力中とみなす', () => {
+  it('input/textarea/select/contenteditable を入力中とみなす', () => {
     expect(isTypingTarget(document.createElement('input'))).toBe(true)
     expect(isTypingTarget(document.createElement('textarea'))).toBe(true)
+    expect(isTypingTarget(document.createElement('select'))).toBe(true)
+    // jsdom は contentEditable プロパティ設定を属性へ反映しないため、属性を直接立てて確認する。
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    Object.defineProperty(editable, 'isContentEditable', { value: true, configurable: true })
+    expect(isTypingTarget(editable)).toBe(true)
     expect(isTypingTarget(document.createElement('div'))).toBe(false)
     expect(isTypingTarget(null)).toBe(false)
   })
