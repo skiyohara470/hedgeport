@@ -69,6 +69,9 @@ describe('preload api', () => {
       source: { kind: 'remote', target },
       destination: { kind: 'local', target: null, directory: '/local' },
     })
+    api.openPreview({ source: 'remote', path: '/a.txt', name: 'a.txt', target })
+    api.previewMetadata()
+    api.loadPreview('shift_jis')
 
     expect(invokeMock).toHaveBeenCalledWith('storage:download', target, '/remote/a.csv', '/local/a.csv')
     expect(invokeMock).toHaveBeenCalledWith('storage:upload', target, '/local/a.csv', '/remote/a.csv')
@@ -106,6 +109,15 @@ describe('preload api', () => {
       'clipboard:paste',
       expect.objectContaining({ entries: expect.any(Array), source: expect.any(Object) })
     )
+    // プレビュー: open は要求オブジェクト、load は encoding を invoke へ渡す。
+    expect(invokeMock).toHaveBeenCalledWith('preview:open', {
+      source: 'remote',
+      path: '/a.txt',
+      name: 'a.txt',
+      target,
+    })
+    expect(invokeMock).toHaveBeenCalledWith('preview:metadata')
+    expect(invokeMock).toHaveBeenCalledWith('preview:load', 'shift_jis')
   })
 
   it('onHistoryNavigation は購読/解除し、direction だけを listener へ渡す', async () => {

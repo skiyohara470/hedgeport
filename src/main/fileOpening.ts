@@ -6,7 +6,13 @@ import { lstat, open, type FileHandle } from 'node:fs/promises'
 import { BrowserWindow, dialog, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 
 import type { TextDocument } from '../shared/transfer'
-import { decodeTextDocument, encodeTextDocument, resolveEncoding, resolveReadEncoding } from './textCodec'
+import {
+  decodeTextDocument,
+  encodeTextDocument,
+  resolveEncoding,
+  resolveReadEncoding,
+  type DecodeOptions,
+} from './textCodec'
 
 // O_NOFOLLOW があれば symlink を open 時点で弾く。未対応 OS（値が 0）では lstat/fstat identity で補う。
 const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0
@@ -81,13 +87,14 @@ export async function openVerifiedRegularFile(
  * @param encoding 文字コード（未指定は utf-8）
  * @returns TextDocument
  */
-export async function readLocalText(path: unknown, encoding?: unknown): Promise<TextDocument> {
+export async function readLocalText(path: unknown, encoding?: unknown, options?: DecodeOptions): Promise<TextDocument> {
   assertLocalPath(path)
   const readEncoding = resolveReadEncoding(encoding)
   const handle = await openVerifiedRegularFile(path, fsConstants.O_RDONLY)
   try {
     const data = await handle.readFile()
-    return decodeTextDocument(new Uint8Array(data), readEncoding)
+    // サイズ上限は decode 前に判定する（プレビューは緩い上限を options で注入する）。
+    return decodeTextDocument(new Uint8Array(data), readEncoding, options)
   } finally {
     await handle.close().catch(() => undefined)
   }

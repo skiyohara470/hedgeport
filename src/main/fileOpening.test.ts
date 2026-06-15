@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: showOpenDialogMock },
 }))
 
+import { MAX_EDITABLE_TEXT_BYTES, MAX_PREVIEW_TEXT_BYTES } from '../shared/transfer'
 import { chooseApplicationAndOpen, openVerifiedRegularFile, readLocalText, writeLocalText } from './fileOpening'
 
 /** stat/read/write/truncate/close を備えた FileHandle ダブルを作る。 */
@@ -39,6 +40,28 @@ describe('readLocalText / writeLocalText（open handle 経由で TOCTOU 耐性�
   it('通常ファイルを読み TextDocument を返す', async () => {
     openMock.mockResolvedValue(makeHandle())
     await expect(readLocalText('/work/a.txt')).resolves.toEqual({ text: 'hi', encoding: 'utf-8', bom: false })
+  })
+
+  it('Preview 上限注入で 1MiB 超〜20MiB 以下は読めるが、Editor 既定は弾く', async () => {
+    const big = Buffer.alloc(MAX_EDITABLE_TEXT_BYTES + 1024, 0x61)
+    // Editor（既定 1MiB）は弾く。
+    openMock.mockResolvedValue(makeHandle({ readFile: vi.fn().mockResolvedValue(big) }))
+    await expect(readLocalText('/work/big.txt')).rejects.toThrow('too large to edit')
+    // Preview（20MiB 上限を注入）は読める。symlink/TOCTOU 保護（open handle 経由）も維持。
+    openMock.mockResolvedValue(makeHandle({ readFile: vi.fn().mockResolvedValue(big) }))
+    const doc = await readLocalText('/work/big.txt', 'auto', { maxBytes: MAX_PREVIEW_TEXT_BYTES })
+    expect(doc.text.length).toBe(MAX_EDITABLE_TEXT_BYTES + 1024)
+  })
+
+  it('Preview 上限 20MiB 超は preview 用エラーで弾く', async () => {
+    const huge = Buffer.alloc(MAX_PREVIEW_TEXT_BYTES + 1, 0x61)
+    openMock.mockResolvedValue(makeHandle({ readFile: vi.fn().mockResolvedValue(huge) }))
+    await expect(
+      readLocalText('/work/huge.txt', 'auto', {
+        maxBytes: MAX_PREVIEW_TEXT_BYTES,
+        tooLargeMessage: 'File is too large to preview (limit 20 MiB).',
+      })
+    ).rejects.toThrow('too large to preview')
   })
 
   it('symlink（open の ELOOP）を拒否する', async () => {

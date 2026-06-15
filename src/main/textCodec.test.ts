@@ -60,6 +60,20 @@ describe('decodeTextDocument', () => {
     expect(decodeTextDocument(data, 'utf-8')).toEqual({ text: 'hi', encoding: 'utf-8', bom: true })
   })
 
+  it('maxBytes を注入して上限を変えられる（decode 前に判定）', () => {
+    const data = new TextEncoder().encode('abcdef') // 6 bytes
+    expect(() => decodeTextDocument(data, 'utf-8', { maxBytes: 4 })).toThrow()
+    expect(decodeTextDocument(data, 'utf-8', { maxBytes: 16 }).text).toBe('abcdef')
+  })
+
+  it('用途別の上限超過メッセージを使う（既定=編集 / 注入=任意）', () => {
+    const data = new TextEncoder().encode('abcdef')
+    expect(() => decodeTextDocument(data, 'utf-8', { maxBytes: 4 })).toThrow(/edit as text/)
+    expect(() => decodeTextDocument(data, 'utf-8', { maxBytes: 4, tooLargeMessage: 'preview limit' })).toThrow(
+      'preview limit'
+    )
+  })
+
   it('NUL はバイナリ扱い、不正 UTF-8 は文字コード選択を促す', () => {
     expect(() => decodeTextDocument(new Uint8Array([0x61, 0x00]), 'utf-8')).toThrow('binary')
     expect(() => decodeTextDocument(new Uint8Array([0xff, 0xfe]), 'utf-8')).toThrow('Choose another encoding')

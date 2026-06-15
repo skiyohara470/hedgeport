@@ -6,7 +6,13 @@ import type { TextDocument } from '../shared/transfer'
 import { isConnectionTarget } from './connectionStore'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { basenameVirtual, isCanonicalVirtualEntryPath } from './providers/pathUtils'
-import { decodeTextDocument, encodeTextDocument, resolveEncoding, resolveReadEncoding } from './textCodec'
+import {
+  decodeTextDocument,
+  encodeTextDocument,
+  resolveEncoding,
+  resolveReadEncoding,
+  type DecodeOptions,
+} from './textCodec'
 
 /**
  * IPC 越しに渡る接続設定を main 側で必ず再検証する。
@@ -115,12 +121,18 @@ export async function uploadFile(target: unknown, localPath: unknown, remotePath
  * @returns デコード済みテキスト
  * @throws サイズ超過・バイナリ・不正 UTF-8 の場合
  */
-export async function readTextFile(target: unknown, path: unknown, encoding?: unknown): Promise<TextDocument> {
+export async function readTextFile(
+  target: unknown,
+  path: unknown,
+  encoding?: unknown,
+  options?: DecodeOptions
+): Promise<TextDocument> {
   assertConnectionTarget(target)
   assertRemoteFilePath(path)
   const readEncoding = resolveReadEncoding(encoding)
   const data = await createStorageProvider(target).read(path)
-  return decodeTextDocument(data, readEncoding)
+  // サイズ上限は decode 前に判定する（プレビューは緩い上限を options で注入する）。
+  return decodeTextDocument(data, readEncoding, options)
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
 import type { HistoryDirection } from '../../shared/navigation'
+import type { PreviewDocument, PreviewMeta, PreviewOpenRequest } from '../../shared/preview'
 import type { AppSettings } from '../../shared/settings'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type {
@@ -19,7 +20,9 @@ declare global {
    * UI は main process の機能をこの窓口経由でだけ利用する。
    */
   interface HedgePortApi {
-    openPreview: () => void
+    openPreview: (request: PreviewOpenRequest) => Promise<void>
+    previewMetadata: () => Promise<PreviewMeta>
+    loadPreview: (encoding?: ReadEncoding) => Promise<PreviewDocument>
     listLocal: (path?: string) => Promise<LocalDirectory>
     loadConnections: () => Promise<ConnectionTarget[]>
     saveConnections: (targets: ConnectionTarget[]) => Promise<void>

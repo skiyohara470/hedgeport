@@ -21,7 +21,7 @@ vi.mock('./providers/createStorageProvider', () => ({
   createStorageProvider: createProviderMock,
 }))
 
-import { MAX_EDITABLE_TEXT_BYTES } from '../shared/transfer'
+import { MAX_EDITABLE_TEXT_BYTES, MAX_PREVIEW_TEXT_BYTES } from '../shared/transfer'
 import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
 
 const target = {
@@ -129,6 +129,27 @@ describe('fileTransfer', () => {
       readMock.mockResolvedValue(new Uint8Array(MAX_EDITABLE_TEXT_BYTES + 1))
 
       await expect(readTextFile(target, '/big.txt')).rejects.toThrow('too large to edit')
+    })
+
+    it('Preview 上限注入で 1MiB 超〜20MiB 以下は読めるが、Editor 既定は弾く', async () => {
+      const data = new Uint8Array(MAX_EDITABLE_TEXT_BYTES + 1024).fill(0x61)
+      // Editor（既定 1MiB）は弾く。
+      readMock.mockResolvedValue(data)
+      await expect(readTextFile(target, '/big.txt')).rejects.toThrow('too large to edit')
+      // Preview（20MiB 上限を注入）は読める。
+      readMock.mockResolvedValue(data)
+      const doc = await readTextFile(target, '/big.txt', 'auto', { maxBytes: MAX_PREVIEW_TEXT_BYTES })
+      expect(doc.text.length).toBe(MAX_EDITABLE_TEXT_BYTES + 1024)
+    })
+
+    it('Preview 上限 20MiB 超は preview 用エラーで弾く', async () => {
+      readMock.mockResolvedValue(new Uint8Array(MAX_PREVIEW_TEXT_BYTES + 1).fill(0x61))
+      await expect(
+        readTextFile(target, '/huge.txt', 'auto', {
+          maxBytes: MAX_PREVIEW_TEXT_BYTES,
+          tooLargeMessage: 'File is too large to preview (limit 20 MiB).',
+        })
+      ).rejects.toThrow('too large to preview')
     })
 
     it('NUL を含むとバイナリ扱いで弾く', async () => {
