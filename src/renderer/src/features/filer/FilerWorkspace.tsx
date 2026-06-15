@@ -164,7 +164,7 @@ export function calculateSplitRatio(clientX: number, left: number, width: number
   return Math.min(80, Math.max(20, ((clientX - left) / width) * 100))
 }
 
-/** Built-in Editor / Preview モーダルの矩形（fixed 配置の左上座標とサイズ）。 */
+/** Built-in Editor モーダルの矩形（fixed 配置の左上座標とサイズ）。 */
 export interface EditorRect {
   x: number
   y: number
@@ -427,6 +427,7 @@ function FileTable({
 
   /**
    * アクションを実行する。ディレクトリの Open はペイン内移動、それ以外は親ハンドラへ委譲。
+   * file の既定 Open（Enter / toolbar eye / context menu / ダブルクリック）は親ハンドラ経由で Preview を開く。
    */
   const runAction = (id: FileActionId): void => {
     if (id === 'open' && selectionEntries.length === 1 && selectionEntries[0].type === 'directory') {
@@ -494,9 +495,9 @@ function FileTable({
   }
 
   /**
-   * 行のダブルクリックで既定動作を実行する。
-   * ディレクトリはペイン内移動（S3 バケット一覧も同じ）。ファイルは pane 種別に依らず Preview
-   * （独立プレビューウィンドウ）を開く。Enter / eye button / context menu の Open は別系統で従来どおり。
+   * 行のダブルクリックで既定 Open を実行する。
+   * ディレクトリはペイン内移動（S3 バケット一覧も同じ）。ファイルは既定 Open（親ハンドラ経由で Preview）。
+   * Enter / eye button / context menu の Open と同じ経路（`onAction('open')`）を通し、重複を避ける。
    * チェックボックス等の操作系をダブルクリックした場合はファイルを開かない。
    */
   const handleRowDoubleClick = (event: MouseEvent<HTMLTableRowElement>, entry: StorageEntry): void => {
@@ -506,7 +507,7 @@ function FileTable({
       onOpenDirectory(entry.path)
       return
     }
-    onOpenWith('preview', entry)
+    onAction('open', [entry])
   }
 
   /**
@@ -1328,7 +1329,7 @@ export function FilerWorkspace({
     bom: boolean
     dirty: boolean
   } | null>(null)
-  // Built-in Editor / Preview モーダルの位置とサイズ（移動・リサイズ用）。新規ファイルを開くたび中央へ reset。
+  // Built-in Editor モーダルの位置とサイズ（移動・リサイズ用）。新規ファイルを開くたび中央へ reset。
   const [editorRect, setEditorRect] = useState<EditorRect | null>(null)
   // ドラッグ / リサイズ中の開始スナップショット（pointer 座標と開始時の矩形）。
   const editorDragRef = useRef<{ pointerX: number; pointerY: number; rect: EditorRect } | null>(null)
@@ -1766,13 +1767,6 @@ export function FilerWorkspace({
   }
 
   /**
-   * ローカルファイルを OS 既定アプリで開く。
-   */
-  const handleOpenLocal = (entry: StorageEntry): void => {
-    void revealPath(entry.path, true)
-  }
-
-  /**
    * ローカルパスを Finder/Explorer で表示、または OS 既定アプリで開く。
    * 失敗（openPath が非空エラー文字列など）は status bar に表示する。
    *
@@ -2195,8 +2189,8 @@ export function FilerWorkspace({
   const handleRemoteAction: ActionHandler = (id, selection) => {
     switch (id) {
       case 'open':
-        // remote file の既定は Built-in Editor。
-        if (selection[0]?.type === 'file') openInEditor('remote', selection[0])
+        // remote file の既定 Open は Preview（独立ウィンドウ）。編集は Open… > Built-in Editor から。
+        if (selection[0]?.type === 'file') openPreview('remote', selection[0])
         break
       case 'download-local':
         handleDownloadToLocal(selection)
@@ -2233,7 +2227,8 @@ export function FilerWorkspace({
   const handleLocalAction: ActionHandler = (id, selection) => {
     switch (id) {
       case 'open':
-        if (selection[0]?.type === 'file') handleOpenLocal(selection[0])
+        // local file の既定 Open は Preview（独立ウィンドウ）。OS 既定アプリは Open… > System Default から。
+        if (selection[0]?.type === 'file') openPreview('local', selection[0])
         break
       case 'upload':
         handleUpload(selection)
@@ -2334,7 +2329,7 @@ export function FilerWorkspace({
   }
 
   /**
-   * Built-in Editor / Preview モーダルを専用ハンドル（ヘッダのタイトル領域）でドラッグ移動する。
+   * Built-in Editor モーダルを専用ハンドル（ヘッダのタイトル領域）でドラッグ移動する。
    * pointer capture で確実に追従し、矩形全体が viewport 内に収まるようクランプする。
    * ヘッダの操作系（encoding / BOM / Close）は別要素なのでドラッグ起点にならない。
    */

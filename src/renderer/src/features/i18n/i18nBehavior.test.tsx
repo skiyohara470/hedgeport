@@ -186,10 +186,11 @@ describe('FilerWorkspace i18n', () => {
         />
       </I18nProvider>
     )
-    // ファイルのダブルクリックは独立プレビューを開くため、Built-in Editor は context menu の Open で開く。
+    // ファイルの既定 Open は独立プレビューを開くため、Built-in Editor は Open… > 組み込みエディタ で開く。
     const row = (await screen.findByText('a.txt')).closest('tr')!
     fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: '開く Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '開く… Ctrl+Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /組み込みエディタ/ }))
     expect(await screen.findByLabelText('ファイル内容')).toBeTruthy()
     expect(screen.getByLabelText('文字コード')).toBeTruthy()
     expect(screen.getByRole('button', { name: '保存' })).toBeTruthy()
@@ -308,10 +309,11 @@ describe('FilerWorkspace i18n', () => {
         />
       </I18nProvider>
     )
-    // ファイルのダブルクリックは独立プレビューを開くため、Built-in Editor は context menu の Open で開く。
+    // ファイルの既定 Open は独立プレビューを開くため、Built-in Editor は Open… > Built-in Editor で開く。
     const row = (await screen.findByText('a.txt')).closest('tr')!
     fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open… Ctrl+Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Built-in Editor/ }))
     expect(await screen.findByLabelText('File contents')).toBeTruthy()
     expect(screen.getByLabelText('Encoding')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()

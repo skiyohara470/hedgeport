@@ -135,9 +135,11 @@ Security requirements:
 Connect the standalone preview window to actual local and remote files.
 
 Status: real file preview and Search Within Preview are implemented; Diff is not
-yet done. Open with > Preview — and a file-row double-click in any pane
-(local/SFTP/S3) — opens a dedicated preview window; directory double-clicks still
-navigate in place. The main process owns a `PreviewSession` per preview window, bound
+yet done. The default Open for a file — double-click, Enter, the toolbar eye, and
+the context-menu Open, in any pane (local/SFTP/S3) — all open a dedicated preview
+window through one shared dispatch; directories navigate in place on the same
+paths. Built-in Editor / System Default / Choose Application are explicit choices
+under Open…. The main process owns a `PreviewSession` per preview window, bound
 to the window's `webContents.id`, and never embeds credentials or local absolute
 paths in the URL/hash/query. `openPreview(request)` validates the typed
 `PreviewOpenRequest` (`shared/preview.ts`) in main and creates one BrowserWindow
