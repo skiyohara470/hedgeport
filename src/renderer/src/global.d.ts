@@ -1,4 +1,5 @@
 import type { ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
+import type { HistoryDirection } from '../../shared/navigation'
 import type { AppSettings } from '../../shared/settings'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type {
@@ -25,6 +26,7 @@ declare global {
     testConnection: (target: ConnectionTarget) => Promise<ConnectionTestResult>
     loadSettings: () => Promise<AppSettings>
     saveSettings: (settings: AppSettings) => Promise<AppSettings>
+    onHistoryNavigation: (listener: (direction: HistoryDirection) => void) => () => void
     listStorage: (target: ConnectionTarget, path: string) => Promise<StorageEntry[]>
     downloadFile: (target: ConnectionTarget, remotePath: string, localPath: string) => Promise<void>
     uploadFile: (target: ConnectionTarget, localPath: string, remotePath: string) => Promise<void>

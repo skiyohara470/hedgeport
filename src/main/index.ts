@@ -15,7 +15,9 @@ import { chooseApplicationAndOpen, readLocalText, writeLocalText } from './fileO
 import { isConnectionTarget, loadConnections, saveConnections } from './connectionStore'
 import { testConnection } from './connectionTesting'
 import { pickDirectory } from './dialogs'
+import { handleAppCommand, handleSwipe } from './navigationInput'
 import { loadSettings, saveSettings } from './settingsStore'
+import type { HistoryDirection } from '../shared/navigation'
 import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
 import { listLocalEntries } from './localFileListing'
 import { createStorageProvider } from './providers/createStorageProvider'
@@ -65,6 +67,18 @@ function createMainWindow(): void {
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // マウス戻る/進む（Win/Linux app-command）と macOS トラックパッド swipe を、
+  // メインウィンドウでのみ捕捉して renderer のディレクトリ履歴移動へ橋渡しする。
+  // Chromium 既定のページ履歴移動は抑止し、1 入力 = 1 ディレクトリ遷移にする。
+  const sendNavigation = (direction: HistoryDirection): void => window.webContents.send('history:navigate', direction)
+  // app-command / swipe は BrowserWindow（BaseWindow）のイベント。
+  window.on('app-command', (event, command) => {
+    handleAppCommand(command, { preventDefault: () => event.preventDefault(), send: sendNavigation })
+  })
+  window.on('swipe', (_event, direction) => {
+    handleSwipe(direction, sendNavigation)
   })
 
   loadRenderer(window)

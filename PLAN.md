@@ -183,6 +183,27 @@ Implementation notes:
 Support hardware back/forward buttons and equivalent browser navigation events
 for directory history.
 
+Status: implemented. The main window captures Windows/Linux `app-command`
+(`browser-backward`/`browser-forward`, preventDefault + forward to renderer) and
+macOS trackpad `swipe` (right=back, left=forward); the preview window does not.
+A preload `onHistoryNavigation(listener)` exposes only the direction with an
+unsubscribe. The renderer also captures auxiliary mouse buttons (DOM `button`
+3/4) and preventDefaults them (and skips navigation when the mousedown target is
+a text input, since focus has not moved yet at mousedown). FilerWorkspace pushes
+each input onto a queue whose items pin the destination pane+tabId at enqueue
+time, then applies them one-at-a-time (awaiting each) through a per-pane
+imperative handle (`PaneHandle.navigate`); items for a no-longer-active tab or an
+unmounted pane are dropped. Each pane shares one `navigateBack`/`navigateForward`
+with its toolbar buttons. History/path/view updates commit only on a successful
+list (commit-on-success): a failed read keeps the current location, history, and
+view, so back/forward availability and the breadcrumb stay consistent and the
+action is retryable (back/forward still work while errored). IPC↔DOM duplicates
+of the same physical input are de-duped (same direction + different source within
+a short window); the rejected observation is still recorded so an immediately
+following same-source input is not dropped. Same-source repeats are not de-duped.
+Mapping/de-dupe logic is in pure, unit-tested functions
+(`main/navigationInput.ts`, `features/filer/mouseNavigation.ts`).
+
 - Mouse Back navigates the focused pane to its previous directory.
 - Mouse Forward navigates the focused pane to its next directory.
 - Remote and local pane histories remain independent.

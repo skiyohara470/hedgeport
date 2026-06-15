@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { exposeMock, invokeMock, sendMock } = vi.hoisted(() => ({
+const { exposeMock, invokeMock, sendMock, onMock, removeListenerMock } = vi.hoisted(() => ({
   exposeMock: vi.fn(),
   invokeMock: vi.fn(),
   sendMock: vi.fn(),
+  onMock: vi.fn(),
+  removeListenerMock: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: exposeMock },
-  ipcRenderer: { invoke: invokeMock, send: sendMock },
+  ipcRenderer: { invoke: invokeMock, send: sendMock, on: onMock, removeListener: removeListenerMock },
 }))
 
 const target = {
@@ -104,5 +106,39 @@ describe('preload api', () => {
       'clipboard:paste',
       expect.objectContaining({ entries: expect.any(Array), source: expect.any(Object) })
     )
+  })
+
+  it('onHistoryNavigation は購読/解除し、direction だけを listener へ渡す', async () => {
+    await import('./index')
+    const api = exposeMock.mock.calls[0][1] as Record<string, (...args: unknown[]) => unknown>
+
+    const listener = vi.fn()
+    const unsubscribe = api.onHistoryNavigation(listener) as () => void
+
+    expect(onMock).toHaveBeenCalledWith('history:navigate', expect.any(Function))
+    const handler = onMock.mock.calls[0][1] as (event: unknown, direction: string) => void
+    // main から (event, direction) で届くが、renderer へは direction のみ渡す。
+    handler({ sender: 'ipc' }, 'back')
+    expect(listener).toHaveBeenCalledWith('back')
+
+    unsubscribe()
+    expect(removeListenerMock).toHaveBeenCalledWith('history:navigate', handler)
+  })
+
+  it('onHistoryNavigation は不正な direction を listener へ渡さない', async () => {
+    await import('./index')
+    const api = exposeMock.mock.calls[0][1] as Record<string, (...args: unknown[]) => unknown>
+    const listener = vi.fn()
+    api.onHistoryNavigation(listener)
+    const handler = onMock.mock.calls[0][1] as (event: unknown, direction: unknown) => void
+
+    handler({}, 'garbage')
+    handler({}, 42)
+    handler({}, undefined)
+    expect(listener).not.toHaveBeenCalled()
+
+    handler({}, 'forward')
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith('forward')
   })
 })
