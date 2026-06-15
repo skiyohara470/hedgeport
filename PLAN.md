@@ -37,7 +37,8 @@ Known foundations that still need work:
 - Credentials are stored in a `0600` JSON file but are not encrypted.
 - Large transfers currently read whole files into memory.
 - Transfer progress, cancellation, retry, and resume are not implemented.
-- The standalone preview window is still a placeholder.
+- The standalone preview window shows real files with in-preview search; diff in
+  the preview window is not implemented yet.
 
 ## Prioritized Roadmap
 
@@ -133,14 +134,63 @@ Security requirements:
 
 Connect the standalone preview window to actual local and remote files.
 
+Status: real file preview and Search Within Preview are implemented; Diff is not
+yet done. Open with > Preview — and a file-row double-click in any pane
+(local/SFTP/S3) — opens a dedicated preview window; directory double-clicks still
+navigate in place. The main process owns a `PreviewSession` per preview window, bound
+to the window's `webContents.id`, and never embeds credentials or local absolute
+paths in the URL/hash/query. `openPreview(request)` validates the typed
+`PreviewOpenRequest` (`shared/preview.ts`) in main and creates one BrowserWindow
+per request (multiple previews can be open). `validatePreviewRequest` enforces a
+local absolute path / remote canonical virtual path, rejects NUL and control
+characters, validates the remote target, and derives the display name from the
+validated path (the renderer-supplied name is not trusted). `preview:metadata`
+and `preview:load(encoding)` only read the session bound to `event.sender`, so
+the main window or another preview cannot read it; sessions are destroyed on
+window close / render-process-gone, and a failed initial render load deletes the
+session and destroys the window before rejecting. Reads reuse the existing
+validated `readTextFile`/`readLocalText` (path/NUL/encoding auto-or-manual; the
+encoding argument is also re-validated at the main boundary), but with a
+preview-specific size limit injected: the Built-in Editor keeps 1 MiB
+(`MAX_EDITABLE_TEXT_BYTES`) while preview allows up to 20 MiB
+(`MAX_PREVIEW_TEXT_BYTES`), enforced before decode with a preview-specific
+too-large message. The size cap is checked after the provider/fs reads the whole
+file into memory (current readers have no streaming path), so it bounds decode,
+not the read itself — noted as a known constraint.
+The preview renderer receives only `PreviewMeta` (name, display path, source) for
+the header and a `PreviewDocument` (meta + `TextDocument`) for the body — no
+target/secret. Metadata is fetched separately from content, so the file name /
+source / path stay visible even while a decode/read fails. Content is rendered as
+React text nodes (never `dangerouslySetInnerHTML`); the encoding select offers
+Auto/UTF-8/Shift_JIS/EUC-JP and keeps the user's choice — picking Auto stays Auto
+(re-detects on reload) and the detected encoding is shown only as a supplement on
+the Auto label, not by switching the selected value. A request-id guard stops a
+stale load from overwriting a newer selection.
+
 #### Search Within Preview
+
+Status: implemented.
 
 - Find next/previous
 - Match count and current match
 - Case-sensitive toggle
-- Keyboard shortcuts (`Mod+F`, `Enter`, `Shift+Enter`, `Escape`)
-- Preserve selected encoding
-- Avoid blocking the renderer for large text
+- Keyboard shortcuts (`Mod+F` / `Cmd+F`, `Enter`, `Shift+Enter`, `Escape`)
+- Preserve selected encoding (search recomputes after an encoding reload and
+  reconciles the active match)
+- Avoid blocking the renderer for large text (plain single text node when there
+  is no query; only segment the body when searching, with a `MAX_MATCHES` cap
+  surfaced in the UI)
+
+The search itself is a literal (non-regex) string search in a pure renderer
+module (`features/preview/previewSearch.ts`), independent of Chromium's
+`webContents.findInPage`; case-insensitive matching keeps indices aligned to the
+original text. Browser-native find is preventDefaulted.
+
+Future enhancement:
+
+- Add an optional regular-expression mode with an explicit toggle.
+- Show invalid-pattern errors without hiding the current file contents.
+- Keep match/result limits and avoid patterns that can block the renderer.
 
 #### Diff
 
@@ -164,7 +214,8 @@ recursive search through file contents.
 MVP:
 
 - Search from the current directory
-- Query, case sensitivity, and file-name include/exclude patterns
+- Query, literal/regular-expression mode, case sensitivity, and file-name
+  include/exclude patterns
 - Stream results as `path + line number + excerpt`
 - Open a result in preview/editor at the matching line
 - Cancellation, result limits, file-size limits, and binary-file exclusion
@@ -419,7 +470,7 @@ have proven useful. Do not mix SQL query execution into the file panes.
 2. Theme selection
 3. Secure credential storage and migration
 4. Settings-based connection import/export
-5. Real preview window and in-preview search
+5. Real preview window and in-preview search (done; diff pending)
 6. Text diff
 7. Recursive grep with cancellation and limits
 8. Mouse back/forward directory navigation

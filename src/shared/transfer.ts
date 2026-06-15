@@ -12,6 +12,13 @@ import type { StorageEntryType } from './storage'
 export const MAX_EDITABLE_TEXT_BYTES = 1024 * 1024
 
 /**
+ * 読み取り専用プレビューで扱える最大バイト数（20 MiB）。
+ * 編集（MAX_EDITABLE_TEXT_BYTES）より緩いが無制限にはしない。全文表示・全文検索の上限。
+ * UI / エラー / テストはこの値を一貫参照する。
+ */
+export const MAX_PREVIEW_TEXT_BYTES = 20 * 1024 * 1024
+
+/**
  * テキスト編集で扱える文字コード（保存はこの concrete のみ）。
  */
 export type TextEncoding = 'utf-8' | 'shift_jis' | 'euc-jp'

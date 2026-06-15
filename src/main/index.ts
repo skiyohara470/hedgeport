@@ -16,6 +16,14 @@ import { isConnectionTarget, loadConnections, saveConnections } from './connecti
 import { testConnection } from './connectionTesting'
 import { pickDirectory } from './dialogs'
 import { handleAppCommand, handleSwipe } from './navigationInput'
+import {
+  createPreviewSessionStore,
+  handlePreviewLoad,
+  handlePreviewMeta,
+  openPreviewSession,
+  type PreviewReaders,
+  type PreviewWindowHandle,
+} from './previewSession'
 import { loadSettings, saveSettings } from './settingsStore'
 import type { HistoryDirection } from '../shared/navigation'
 import { deleteFile, downloadFile, downloadToDirectory, readTextFile, uploadFile, writeTextFile } from './fileTransfer'
@@ -24,7 +32,14 @@ import { createStorageProvider } from './providers/createStorageProvider'
 import { createLocalDirectory, createRemoteDirectory, renameLocal, renameRemote } from './storageMutations'
 import type { ConnectionTarget } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
-import type { BatchItem, OpenMode, PasteRequest, ReadEncoding, TextEncoding } from '../shared/transfer'
+import {
+  MAX_PREVIEW_TEXT_BYTES,
+  type BatchItem,
+  type OpenMode,
+  type PasteRequest,
+  type ReadEncoding,
+  type TextEncoding,
+} from '../shared/transfer'
 
 const rendererUrl = process.env.ELECTRON_RENDERER_URL
 
@@ -35,14 +50,13 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL
  * @param window 描画先の BrowserWindow
  * @param route hash ルーティング用の画面識別子
  */
-function loadRenderer(window: BrowserWindow, route = ''): void {
+function loadRenderer(window: BrowserWindow, route = ''): Promise<void> {
   if (rendererUrl) {
-    void window.loadURL(`${rendererUrl}${route}`)
-    return
+    return window.loadURL(`${rendererUrl}${route}`)
   }
 
   // build 後は hash route を index.html に渡して renderer 側の画面を切り替える。
-  void window.loadFile(join(__dirname, '../renderer/index.html'), {
+  return window.loadFile(join(__dirname, '../renderer/index.html'), {
     hash: route.replace(/^#/, ''),
   })
 }
@@ -81,27 +95,61 @@ function createMainWindow(): void {
     handleSwipe(direction, sendNavigation)
   })
 
-  loadRenderer(window)
+  void loadRenderer(window)
+}
+
+// プレビューセッション。送信元ウィンドウ（webContents.id）へ束縛して main 側で保持する。
+// renderer へは任意 path/target/session id を指定させず、event.sender に紐づくセッションだけ読める。
+const previewSessions = createPreviewSessionStore()
+// プレビューは編集（1 MiB）より緩い専用上限（20 MiB）を使う。上限超過は preview 用文言で返す。
+// 既存の検証付き reader（path/target/NUL/encoding 検証・local の symlink/TOCTOU 保護）を再利用し、
+// 上限と超過メッセージだけを注入する（重複実装しない）。
+const previewDecodeOptions = {
+  maxBytes: MAX_PREVIEW_TEXT_BYTES,
+  tooLargeMessage: `File is too large to preview (limit ${MAX_PREVIEW_TEXT_BYTES / (1024 * 1024)} MiB).`,
+}
+const previewReaders: PreviewReaders = {
+  readRemote: (target, path, encoding) => readTextFile(target, path, encoding, previewDecodeOptions),
+  readLocal: (path, encoding) => readLocalText(path, encoding, previewDecodeOptions),
 }
 
 /**
- * プレビュー表示専用のサブウィンドウを生成する。
- * renderer 側では #preview ルートを見て専用画面へ切り替える。
+ * プレビュー表示専用のサブウィンドウを生成し、要求をセッションとして束縛する。
+ * 認証情報やローカル絶対パスは URL/hash/query へ載せず、main 管理セッション越しに読む。
+ * 描画ロードを await し、失敗時は session 削除 + window 破棄してから reject する（残骸を残さない）。
+ * window close / レンダラプロセス消失でもセッションを確実に破棄する。
+ * ライフサイクルの本体は previewSession.openPreviewSession（electron 非依存・テスト可能）にあり、
+ * ここでは BrowserWindow の生成と各操作の橋渡しだけを行う。
+ *
+ * @param request 検証前の open 要求（renderer 由来）
+ * @returns 描画ロード完了で解決する Promise（invoke 経由で renderer へ成否を返す）
  */
-function createPreviewWindow(): void {
-  const previewWindow = new BrowserWindow({
-    width: 840,
-    height: 640,
-    minWidth: 560,
-    minHeight: 400,
-    title: 'HedgePort Preview',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
-      sandbox: false,
-    },
+function openPreviewWindow(request: unknown): Promise<void> {
+  return openPreviewSession(request, previewSessions, (validated): PreviewWindowHandle => {
+    const previewWindow = new BrowserWindow({
+      width: 840,
+      height: 640,
+      minWidth: 560,
+      minHeight: 400,
+      // タイトルにファイル名を含める（表示用。シェル等の危険な用途へは使わない）。
+      title: `${validated.name} — HedgePort Preview`,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.mjs'),
+        sandbox: false,
+      },
+    })
+    return {
+      id: previewWindow.webContents.id,
+      loadContent: () => loadRenderer(previewWindow, '#preview'),
+      destroy: () => previewWindow.destroy(),
+      onClosed: (callback) => {
+        previewWindow.on('closed', callback)
+      },
+      onRenderProcessGone: (callback) => {
+        previewWindow.webContents.on('render-process-gone', callback)
+      },
+    }
   })
-
-  loadRenderer(previewWindow, '#preview')
 }
 
 /**
@@ -109,7 +157,13 @@ function createPreviewWindow(): void {
  * main process はここを起点に renderer からの要求を各サービスへ中継する。
  */
 app.whenReady().then(() => {
-  ipcMain.on('preview:open', createPreviewWindow)
+  // プレビュー: open は要求を検証して新ウィンドウを生成（失敗は invoke で renderer へ返す）。
+  // load は送信元ウィンドウに束縛されたセッションだけを読める（メインウィンドウからの load は拒否）。
+  ipcMain.handle('preview:open', (_event, request: unknown) => openPreviewWindow(request))
+  ipcMain.handle('preview:metadata', (event) => handlePreviewMeta(previewSessions, event.sender.id))
+  ipcMain.handle('preview:load', (event, encoding?: ReadEncoding) =>
+    handlePreviewLoad(previewSessions, event.sender.id, encoding, previewReaders)
+  )
   ipcMain.handle('connections:load', loadConnections)
   ipcMain.handle('connections:save', (_event, targets: ConnectionTarget[]) => saveConnections(targets))
   ipcMain.handle('connections:test', (_event, target: ConnectionTarget) => testConnection(target))

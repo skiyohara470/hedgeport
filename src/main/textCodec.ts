@@ -149,18 +149,36 @@ export function detectEncoding(data: Uint8Array): TextEncoding {
 }
 
 /**
+ * decodeTextDocument のオプション。上限とその超過メッセージを注入できる。
+ * 既定は編集用（MAX_EDITABLE_TEXT_BYTES）。プレビューはより緩い上限を渡す。
+ */
+export interface DecodeOptions {
+  /** 許容する最大バイト数。 */
+  maxBytes?: number
+  /** 上限超過時のエラーメッセージ。用途別の文言（edit / preview）を渡す。 */
+  tooLargeMessage?: string
+}
+
+/**
  * バイト列をテキストへデコードして TextDocument にする。
  * 'auto' は自動判定し、返す encoding は常に concrete。
  * 大容量 / NUL（バイナリ）は弾く。utf-8 は BOM 有無を保持し、不正時は文字コード選択を促す。
+ * サイズ上限は decode 前に判定する（注入可能。既定は編集用上限）。
  *
  * @param data 生バイト列
  * @param encoding 文字コード（'auto' で自動判定）
+ * @param options 上限・上限超過メッセージ（既定は編集用上限）
  * @returns text / 検出した concrete encoding / bom
  * @throws サイズ超過・バイナリ・不正 UTF-8・判定不能の場合
  */
-export function decodeTextDocument(data: Uint8Array, encoding: ReadEncoding): TextDocument {
-  if (data.byteLength > MAX_EDITABLE_TEXT_BYTES) {
-    throw new Error(`File is too large to edit as text (limit ${MAX_EDITABLE_TEXT_BYTES} bytes).`)
+export function decodeTextDocument(
+  data: Uint8Array,
+  encoding: ReadEncoding,
+  options: DecodeOptions = {}
+): TextDocument {
+  const maxBytes = options.maxBytes ?? MAX_EDITABLE_TEXT_BYTES
+  if (data.byteLength > maxBytes) {
+    throw new Error(options.tooLargeMessage ?? `File is too large to edit as text (limit ${maxBytes} bytes).`)
   }
   // NUL を含む場合はバイナリ扱い（日本語 SJIS/EUC は NUL を含まない）。
   if (data.includes(0)) {

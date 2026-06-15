@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConnectionTarget } from '../connection/connectionTypes'
@@ -186,7 +186,10 @@ describe('FilerWorkspace i18n', () => {
         />
       </I18nProvider>
     )
-    fireEvent.doubleClick((await screen.findByText('a.txt')).closest('tr')!)
+    // ファイルのダブルクリックは独立プレビューを開くため、Built-in Editor は context menu の Open で開く。
+    const row = (await screen.findByText('a.txt')).closest('tr')!
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: '開く Enter' }))
     expect(await screen.findByLabelText('ファイル内容')).toBeTruthy()
     expect(screen.getByLabelText('文字コード')).toBeTruthy()
     expect(screen.getByRole('button', { name: '保存' })).toBeTruthy()
@@ -305,17 +308,20 @@ describe('FilerWorkspace i18n', () => {
         />
       </I18nProvider>
     )
-    fireEvent.doubleClick((await screen.findByText('a.txt')).closest('tr')!)
+    // ファイルのダブルクリックは独立プレビューを開くため、Built-in Editor は context menu の Open で開く。
+    const row = (await screen.findByText('a.txt')).closest('tr')!
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
     expect(await screen.findByLabelText('File contents')).toBeTruthy()
     expect(screen.getByLabelText('Encoding')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
   })
 
-  it('Preview（読み取り専用）の aria を en/ja で出す', async () => {
+  it('Preview メニュー（en/ja）は独立プレビューウィンドウを開く', async () => {
     const open = async (language: 'ja' | 'en', openLabel: RegExp, previewLabel: string) => {
       const listStorage = vi.fn().mockResolvedValue([{ name: 'a.txt', path: '/a.txt', type: 'file' }])
-      const readText = vi.fn().mockResolvedValue({ text: 'hi', encoding: 'utf-8', bom: false })
-      Object.defineProperty(window, 'hedgeport', { configurable: true, value: { listStorage, readText } })
+      const openPreview = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(window, 'hedgeport', { configurable: true, value: { listStorage, openPreview } })
       render(
         <I18nProvider language={language}>
           <FilerWorkspace
@@ -331,14 +337,24 @@ describe('FilerWorkspace i18n', () => {
       fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
       fireEvent.click(await screen.findByRole('menuitem', { name: openLabel }))
       fireEvent.click(await screen.findByRole('menuitem', { name: previewLabel }))
+      return openPreview
     }
 
-    await open('en', /Open…/, 'Preview')
-    expect(await screen.findByRole('dialog', { name: 'Preview a.txt' })).toBeTruthy()
+    const openPreviewEn = await open('en', /Open…/, 'Preview')
+    await waitFor(() =>
+      expect(openPreviewEn).toHaveBeenCalledWith({
+        source: 'remote',
+        target: expect.objectContaining({ id: sftp.id }),
+        path: '/a.txt',
+        name: 'a.txt',
+      })
+    )
+    // in-app の読み取り専用ダイアログは開かない。
+    expect(screen.queryByLabelText('File contents')).toBeNull()
     cleanup()
 
-    await open('ja', /開く…/, 'プレビュー')
-    expect(await screen.findByRole('dialog', { name: 'a.txt をプレビュー' })).toBeTruthy()
+    const openPreviewJa = await open('ja', /開く…/, 'プレビュー')
+    await waitFor(() => expect(openPreviewJa).toHaveBeenCalledTimes(1))
   })
 
   it('batch 部分失敗の status は言語切替で再翻訳される', async () => {

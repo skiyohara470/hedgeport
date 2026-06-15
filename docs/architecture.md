@@ -31,6 +31,8 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
   接続設定のロード / 保存。`migrateConnectionTarget` で legacy S3（bucket / prefix 付き）を load / save 両方で正規化する。
 - `navigationInput.ts`
   マウス戻る/進みの OS イベント→履歴方向の写像（electron 非依存の純関数。`mapAppCommand` / `mapSwipeDirection` / `handleAppCommand` / `handleSwipe`）。`index.ts` がメインウィンドウ（プレビューウィンドウは対象外）の `app-command`（Win/Linux）と `swipe`（macOS）を捕捉し、Chromium 既定遷移を preventDefault して `history:navigate` を renderer へ送る。
+- `previewSession.ts`
+  独立プレビューウィンドウの session 管理（electron 非依存のロジック）。`validatePreviewRequest`（source 検証、local は絶対パス・remote は canonical 仮想エントリパス、NUL/制御文字を拒否、remote は target 必須・local は target を捨てる、name は renderer 値を信用せず検証済み path の basename から導出）、`createPreviewSessionStore`（`webContents.id` をキーにした保管庫）、`handlePreviewMeta`（送信元束縛の session から name/displayPath/source のみ返す。内容ロードと独立）、`handlePreviewLoad`（送信元束縛の session だけを reader で読む。encoding は `assertReadEncoding` で境界検証）、`loadPreviewDocument`（reader 注入、target/secret を返さない）、`openPreviewSession`（要求検証 → ウィンドウ生成 → session 登録 → close/render-process-gone 破棄登録 → 描画ロードを await、失敗時は session 削除 + window 破棄してから throw。electron 非依存の注入境界で単体テスト可能）。`index.ts` は `preview:open`（`openPreviewSession` に BrowserWindow を `PreviewWindowHandle` として渡すだけ）、`preview:metadata`（`event.sender.id` の session メタ）、`preview:load`（`event.sender.id` の session のみ、既存 `readTextFile`/`readLocalText` を再利用）を配線する。メインウィンドウや別プレビューからの metadata/load は session を持たないため拒否される。
 - `settingsStore.ts`
   アプリ設定（テーマ / 文字サイズ / 表示密度 / 隠しファイル / 削除確認 / 表示言語）の load / save。`userData/settings.json` へ atomic（temp+rename）・0600 で保存し、`shared/settings` の `normalizeSettings` で未知 / 不正フィールドを既定へ補正する version migration を兼ねる。接続レコードとは別ファイル。`language` の既定のみ `app.getLocale()` 由来。
 - `connectionTesting.ts`
@@ -49,7 +51,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
   保存先ディレクトリ選択ダイアログ。`event.sender` から親ウィンドウを得て attach し、キャンセル時は null を返す。
 - `textCodec.ts`
   文字コードの decode/encode と自動判定を一元化（`decodeTextDocument` / `encodeTextDocument` / `detectEncoding` / `resolveEncoding` / `resolveReadEncoding`）。fileTransfer / fileOpening が共有する純ロジック。
-  read は `auto | TextEncoding` を受け、返す `TextDocument.encoding` は常に concrete（保存にそのまま使える）。write は concrete のみ受け付け、`auto` は拒否する。
+  read は `auto | TextEncoding` を受け、返す `TextDocument.encoding` は常に concrete（保存にそのまま使える）。write は concrete のみ受け付け、`auto` は拒否する。`decodeTextDocument` のサイズ上限は注入可能（`DecodeOptions { maxBytes, tooLargeMessage }`、decode 前に判定）。既定は編集用 `MAX_EDITABLE_TEXT_BYTES`（1 MiB）、プレビューは `MAX_PREVIEW_TEXT_BYTES`（20 MiB）を注入し用途別の超過メッセージを出す。`readTextFile` / `readLocalText` がこの options を透過するため、編集・プレビューで読み込み・decode・各種安全検証を共有しつつ上限だけ差し替えられる（重複実装なし）。
   **自動判定の方針（`detectEncoding`）**: ① サイズ上限 / NUL（バイナリ）は呼び出し側の `decodeTextDocument` で先に弾く。② UTF-8 BOM → utf-8。③ fatal な UTF-8 デコードが通る（ASCII / 空を含む）→ utf-8。④ それ以外は Shift_JIS / EUC-JP を構造的に検証し、妥当な候補が 1 つだけならそれを採用。⑤ 両方妥当なときだけ「日本語らしさスコア」（ひらがな・全角カタカナ・漢字を加点、置換文字 U+FFFD を減点。半角カナは誤デコードで多発するため数えない）を比較し、差が `SCORE_MARGIN`（=2）以上の明確な勝者がいる場合のみ採用。⑥ 曖昧 / どちらも不正なら黙って選ばず、手動選択を促す例外を投げる。
   **限界**: ヒューリスティックのため短いバイト列や日本語をほぼ含まない非 UTF-8 は曖昧判定になりやすく、その場合は手動 encoding 選択が必要。ISO-2022-JP / UTF-16 等は対象外。
 - `fileOpening.ts`
@@ -81,7 +83,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `features/icons/Icon.tsx`
   アプリ共通アイコン（gear=settings を含む）。循環参照回避のため独立モジュール化。
 - `features/preview/`
-  別ウィンドウのプレビュー画面。メインと同じ設定を load して同じ外観・言語を適用する。
+  別ウィンドウのプレビュー画面。メインと同じ設定を load して同じ外観・言語を適用する。`PreviewWindow.tsx` は main 管理 session から `previewMetadata()` でヘッダ用メタ情報（name/source/path）を内容読込と分離して取得し、`loadPreview(encoding)` で本文を取得する（target/secret は受け取らない）。メタを分離しているため、decode/read 失敗中でもファイル名 / source / path は表示でき、その間も encoding select を操作して再試行できる。読み取り専用テキストは React の text node として描画する（`dangerouslySetInnerHTML` 不使用）。encoding select（Auto/UTF-8/Shift_JIS/EUC-JP）はユーザーの選択値を保持し、Auto を選んだら Auto のまま（再読込で再判定）で、検出された encoding は選択値を変えずに Auto ラベルへ補足表示する。手動変更で再読込し、request-id で古い結果の上書きを防ぐ。`previewSearch.ts` はウィンドウ内検索の純ロジック（文字列リテラル検索、case-insensitive でも index は原文対応〔UTF-16 code unit・長さ保存 folding。astral や長さが変わる文字は畳まない〕、`MAX_MATCHES` 上限、`searchText` / `buildSegments` / `next`・`prevMatchIndex` / `clampActiveIndex`）で、Chromium の `findInPage` に依存しない。Ctrl/Cmd+F で検索バーを開き（Enter=次 / Shift+Enter=前 / Esc=バーを閉じる。Esc は input 以外へ focus 移動後でも window keydown で効く）、query なしは本文を単一 text node、query ありのみ segment 化する。
 - `global.d.ts`
   preload が公開した `window.hedgeport` の型定義。
 
@@ -94,7 +96,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `storage.ts`
   ファイル一覧の 1 エントリを表す契約。
 - `transfer.ts`
-  単一ファイル操作・ディレクトリ作成 / リネーム・バッチ / クリップボードの要求契約（download / upload / read-text / write-text / download-to-directory / create-directory / rename / batch / paste）と、`BatchOperationResult` / `ClipboardEntry` / `PasteRequest` / `TextDocument` / `TextEncoding` / `OpenMode`、テキスト編集の最大バイト数 `MAX_EDITABLE_TEXT_BYTES`。
+  単一ファイル操作・ディレクトリ作成 / リネーム・バッチ / クリップボードの要求契約（download / upload / read-text / write-text / download-to-directory / create-directory / rename / batch / paste）と、`BatchOperationResult` / `ClipboardEntry` / `PasteRequest` / `TextDocument` / `TextEncoding` / `OpenMode`、テキスト編集の最大バイト数 `MAX_EDITABLE_TEXT_BYTES`（1 MiB）とプレビューの最大バイト数 `MAX_PREVIEW_TEXT_BYTES`（20 MiB）。
 
 ## IPC 配線
 
@@ -102,7 +104,9 @@ renderer から main への通信は、必ず preload を経由します。
 
 | renderer API                                              | preload                                                                  | main                                                   | 実処理                                                                                    |
 | --------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `openPreview()`                                           | `ipcRenderer.send('preview:open')`                                       | `ipcMain.on('preview:open', ...)`                      | プレビュー用ウィンドウを開く                                                              |
+| `openPreview(request)`                                    | `ipcRenderer.invoke('preview:open', request)`                            | `ipcMain.handle('preview:open', ...)`                  | 要求検証 → プレビューウィンドウ生成 + session 登録（描画ロード失敗は cleanup して reject）  |
+| `previewMetadata()`                                       | `ipcRenderer.invoke('preview:metadata')`                                 | `ipcMain.handle('preview:metadata', ...)`              | 送信元束縛 session のメタ（name/path/source）を内容ロードと独立に返す                     |
+| `loadPreview(encoding?)`                                  | `ipcRenderer.invoke('preview:load', encoding)`                           | `ipcMain.handle('preview:load', ...)`                  | 送信元に束縛された session のファイルを読む（target/secret は返さない）                   |
 | `loadConnections()`                                       | `ipcRenderer.invoke('connections:load')`                                 | `ipcMain.handle('connections:load', ...)`              | 接続設定を読む                                                                            |
 | `saveConnections(targets)`                                | `ipcRenderer.invoke('connections:save', targets)`                        | `ipcMain.handle('connections:save', ...)`              | 接続設定を保存する                                                                        |
 | `testConnection(target)`                                  | `ipcRenderer.invoke('connections:test', target)`                         | `ipcMain.handle('connections:test', ...)`              | 接続テスト                                                                                |
@@ -193,7 +197,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 1. アプリ起動時に `App.tsx` が `window.hedgeport.loadConnections()` を呼ぶ。
 2. 接続先を選ぶと `FilerWorkspace` が開く。
 3. リモート側は `listStorage()`、ローカル側は `listLocal()` で一覧を取得する。
-4. プレビュー操作は `openPreview()` を呼び、別ウィンドウを開く。
+4. プレビュー操作は `openPreview(request)` を呼び、別ウィンドウを開く（実ファイルは main session 経由で `loadPreview` する）。
 
 ## テスト方針
 
@@ -236,7 +240,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 
 - 接続情報は `userData/connections.json` に保存している。
 - ファイル権限は `0600` にしているが、認証情報の暗号化はまだ未対応。
-- 別ウィンドウのプレビュー画面は現時点ではプレースホルダのまま。テキストの閲覧 / 編集はファイラー内のモーダル（`Open`）で行い、保存後にリモート一覧を再ロードする。
+- 別ウィンドウのプレビュー画面は実ファイルを表示する（local/remote、読み取り専用）。Open with > Preview が `openPreview(request)` を呼んで独立ウィンドウを開き、main は session（送信元ウィンドウ束縛）越しに `readTextFile`/`readLocalText` を再利用して読む。認証情報・ローカル絶対パスは URL/hash/query に載せない。ウィンドウ内検索は Ctrl/Cmd+F。編集はファイラー内の Built-in Editor モーダル（`Open`）で行い、保存後に一覧を再ロードする（preview は読み取り専用なので保存はしない）。プレビューウィンドウの diff は未実装。
 - 複数選択に対応。context menu / toolbar / ショートカットは現在の選択全体に作用する。右クリックは対象が選択内なら選択を維持、選択外ならその 1 件へ置換する。Rename / Open は単一選択時のみ有効。
 - 転送（download / upload）と copy はファイルのみ対象。ディレクトリの一括転送 / copy は対象外（rename / delete はディレクトリも対象）。delete の directory は SFTP / local が非再帰（非空はエラー）、S3 は prefix 配下を一括削除。
 - アプリ内 Copy/Paste（Mod+C / Mod+V）は remote↔local の 4 組合せに対応。同名は上書きせず `name copy.ext` で採番。クリップボードは接続設定スナップショットを含み、タブ切替後も保持する。**大容量 / 大量ファイルは現 Provider が全量を一度に read/write する制約があり、メモリ使用に注意（ストリーミング / 進捗は将来対応）。**
@@ -247,10 +251,10 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - 削除確認: `confirmBeforeDelete=true`（既定）のとき remote/local の一括削除と接続削除で confirm を出す。false なら省略。タブ close や encoding 再読込など削除以外の confirm には影響しない。
 - バッチ結果は逐次処理で成功 / 失敗件数を status bar に集計表示する（部分失敗を許容）。
 - 各ペインは「nav 行（接続名/パンくず/移動）＋検索 input + action toolbar 帯」を固定し、一覧（`.file-table-scroll`）だけがスクロールする（flex レイアウトでマジック値なし）。検索 input は可視ラベルを持たず `aria-label="Search files"`。空ディレクトリでも検索 / toolbar は表示維持。
-- リモート / ローカルテキストは文字コード選択編集に対応（utf-8 / shift_jis / euc-jp、iconv-lite で main 一元変換）。Built-in Editor / Preview の初回読みは `auto` で自動判定し、検出された concrete encoding をエディタ header の encoding select に表示する（保存は常に concrete で行い、`auto` で保存しない）。未編集時の encoding 変更は即再読込、編集済みは確認後。判定不能 / UTF-8 不正時はモーダルを閉じず別 encoding で再読込できる。
+- リモート / ローカルテキストは文字コード選択に対応（utf-8 / shift_jis / euc-jp、iconv-lite で main 一元変換）。Built-in Editor とプレビューウィンドウの初回読みは `auto` で自動判定する。Built-in Editor は検出された concrete encoding を select に表示し、保存も常に concrete で行う（`auto` では保存しない）。未編集時の encoding 変更は即再読込、編集済みは確認後。プレビューウィンドウは Auto の選択を保持し、検出結果を Auto ラベルへ補足表示する。判定不能 / UTF-8 不正時も画面を閉じず、別 encoding を選んで再読込できる。サイズ上限は Built-in Editor が 1 MiB（`MAX_EDITABLE_TEXT_BYTES`）、プレビューが 20 MiB（`MAX_PREVIEW_TEXT_BYTES`）で、上限超過はそれぞれ専用文言のエラーにする（decode 前に判定）。**現 Provider / fs reader はファイル全量を一度に読むため、上限判定はメモリ取得後に行う制約がある（ストリーミング読みは将来対応）。**
 - ローカルは Finder/Explorer/File Manager 表示（`Show in …` = showItemInFolder、`Open Folder in …` = openPath）に対応。OS により表記を出し分ける。
-- ファイルの開き方は Open（既定）/ Open…（方式選択）。toolbar は eye の split button（本体=Open / ▼=Open…）。`OpenMode` = preview / built-in / system-default / choose-app。既定は remote=Built-in Editor、local=System Default。Preview は読み取り専用ビューア。Built-in Editor は remote/local 双方対応（local は regular file のみ、symlink 不可）。Choose Application は `spawn(shell:false, 引数配列)` でアプリ起動（パス検証）。macOS では選択ダイアログの `defaultPath` を `/Applications` にし `.app` のみへ絞る（`.app` は OS が単一ファイル扱いのため内部実行ファイルは選ばれない）。Windows / Linux は従来どおり `defaultPath` / filter なし。workspace 右上の旧 preview eye ボタンは廃止。
-- 一覧行のダブルクリックは既定の Open を実行する。ディレクトリはペイン内移動、ファイルは Enter / eye button / context menu の Open と同じ既定アクション（remote=Built-in Editor / local=System Default）を開く。チェックボックスや行内コントロール（`input` / `button` / `.checkbox-cell`）由来のダブルクリックではファイルを開かない。
+- ファイルの開き方は Open（既定）/ Open…（方式選択）。toolbar は eye の split button（本体=Open / ▼=Open…）。`OpenMode` = preview / built-in / system-default / choose-app。既定は remote=Built-in Editor、local=System Default。Preview は独立ウィンドウの読み取り専用ビューア（main session 経由、ウィンドウ内検索つき）。Built-in Editor は remote/local 双方対応（local は regular file のみ、symlink 不可）。Choose Application は `spawn(shell:false, 引数配列)` でアプリ起動（パス検証）。macOS では選択ダイアログの `defaultPath` を `/Applications` にし `.app` のみへ絞る（`.app` は OS が単一ファイル扱いのため内部実行ファイルは選ばれない）。Windows / Linux は従来どおり `defaultPath` / filter なし。workspace 右上の旧 preview eye ボタンは廃止。
+- 一覧行のダブルクリックは、ディレクトリ（S3 バケット一覧含む）はペイン内移動、ファイルは pane 種別（local/SFTP/S3）に依らず独立プレビューウィンドウ（`onOpenWith('preview', entry)`）を開く。Enter / eye button / context menu の Open（既定アクション = remote: Built-in Editor / local: System Default）と Open… の各方式はダブルクリックとは別系統で従来どおり。チェックボックスや行内コントロール（`input` / `button` / `.checkbox-cell`）由来のダブルクリックではファイルを開かない。
 - Built-in Editor / Preview モーダルは移動・リサイズ可能（名前入力モーダルは対象外）。ヘッダのタイトル領域（`.editor-drag-handle`）を pointer events + pointer capture でドラッグ移動し、ヘッダの操作系（encoding / BOM / Close）はドラッグ起点にならない。右下ハンドル（`.editor-resize-handle`）で両方向にリサイズ。位置・サイズの純粋ジオメトリは `defaultEditorSize` / `centeredEditorPosition` / `clampEditorRect` / `resizeEditorRect`（最小 `MIN_EDITOR_WIDTH` x `MIN_EDITOR_HEIGHT`）に切り出して単体テストする。`clampEditorRect` は位置を考慮してモーダル全体を viewport 内へ収め（サイズを viewport 上限へ収めた上で左上を `[0, viewport - size]` に制限）、ドラッグ・viewport リサイズ・初期配置で共通利用する。`resizeEditorRect` は左上を固定し最大サイズを現在位置で使える領域（`viewport - position`）に制限するため、右端・下端と操作系が常に到達可能。viewport が設定 min より小さい場合は実効最小を viewport 寸法まで縮退させ overflow させない。新規ファイルを開くたびに中央・sensible サイズへ reset する。ドラッグ / リサイズの window リスナーはエディタが途中で閉じても確実に解除する。textarea は flex で本体サイズに追従（`min-height` で可用性担保）。
 - remote の System Default / Choose Application は外部編集セッション（`externalEdit.ts`）で対応。temp へ download→外部アプリ起動し、画面下部のバナーに `Upload Changes` / `Reveal Local Copy` / `Discard` と状態（open / uploading / uploaded / error）を表示。自動 upload はせず、明示操作のみ。外部プロセス終了で破棄/アップロードはしない。同一ファイルの再オープンは既存セッションを再利用する。
 - 表示ラベル類（タブ / ヘッダー / パンくず / 一覧名 / メニュー）は `user-select: none`。input / textarea / editor は選択可能のまま。

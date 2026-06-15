@@ -22,6 +22,7 @@ import {
 } from '../../../../shared/transfer'
 import type { StorageEntry } from '../../../../shared/storage'
 import type { HistoryDirection } from '../../../../shared/navigation'
+import type { PreviewOpenRequest } from '../../../../shared/preview'
 import { createDefaultSettings, type AppSettings, type Language } from '../../../../shared/settings'
 import { mouseButtonDirection, reduceNavigation, type LastNavigation } from './mouseNavigation'
 import { Icon, type IconName } from '../icons/Icon'
@@ -493,9 +494,9 @@ function FileTable({
   }
 
   /**
-   * 行のダブルクリックで既定の open を実行する。
-   * ディレクトリはペイン内移動、ファイルは Enter / eye button / context menu の Open と同じ
-   * 既定アクション（remote=Built-in Editor / local=System Default）を委譲する。
+   * 行のダブルクリックで既定動作を実行する。
+   * ディレクトリはペイン内移動（S3 バケット一覧も同じ）。ファイルは pane 種別に依らず Preview
+   * （独立プレビューウィンドウ）を開く。Enter / eye button / context menu の Open は別系統で従来どおり。
    * チェックボックス等の操作系をダブルクリックした場合はファイルを開かない。
    */
   const handleRowDoubleClick = (event: MouseEvent<HTMLTableRowElement>, entry: StorageEntry): void => {
@@ -505,7 +506,7 @@ function FileTable({
       onOpenDirectory(entry.path)
       return
     }
-    onAction('open', [entry])
+    onOpenWith('preview', entry)
   }
 
   /**
@@ -1326,7 +1327,6 @@ export function FilerWorkspace({
     encoding: TextEncoding
     bom: boolean
     dirty: boolean
-    readOnly: boolean
   } | null>(null)
   // Built-in Editor / Preview モーダルの位置とサイズ（移動・リサイズ用）。新規ファイルを開くたび中央へ reset。
   const [editorRect, setEditorRect] = useState<EditorRect | null>(null)
@@ -1793,13 +1793,35 @@ export function FilerWorkspace({
   }
 
   /**
-   * remote / local のファイルを built-in editor（または preview=readOnly）で開く。
+   * remote / local のファイルを独立プレビューウィンドウで開く。
+   * 認証情報やローカル絶対パスは URL/hash へ載せず、main 管理セッションとして渡す。
+   * 起動失敗（不正要求・接続なし等）は status bar へ構造化エラーで通知する。
    *
    * @param source 'remote'（activeTarget 経由）または 'local'
    * @param entry 対象ファイル
-   * @param readOnly preview のとき true
    */
-  const openInEditor = (source: PaneKind, entry: StorageEntry, readOnly: boolean): void => {
+  const openPreview = (source: PaneKind, entry: StorageEntry): void => {
+    if (source === 'remote' && !activeTarget) return
+    const request: PreviewOpenRequest =
+      source === 'remote' && activeTarget
+        ? { source: 'remote', target: activeTarget, path: entry.path, name: entry.name }
+        : { source: 'local', path: entry.path, name: entry.name }
+    void window.hedgeport.openPreview(request).catch((reason: unknown) =>
+      setTransfer({
+        busy: false,
+        status: null,
+        error: reason instanceof Error ? { raw: reason.message } : { key: 'error.couldNotOpen' },
+      })
+    )
+  }
+
+  /**
+   * remote / local のファイルを built-in editor で開く（編集可能）。
+   *
+   * @param source 'remote'（activeTarget 経由）または 'local'
+   * @param entry 対象ファイル
+   */
+  const openInEditor = (source: PaneKind, entry: StorageEntry): void => {
     if (source === 'remote' && !activeTarget) return
     // 新規ファイルを開くたびに、中央・sensible サイズへ位置とサイズを reset する（viewport 内へクランプ）。
     const viewport = { width: window.innerWidth, height: window.innerHeight }
@@ -1814,7 +1836,6 @@ export function FilerWorkspace({
       encoding: 'utf-8',
       bom: false,
       dirty: false,
-      readOnly,
     })
     // 初回は auto 判定で読み、検出された concrete encoding を後で表示する。
     loadEditorContent(source, entry, 'auto')
@@ -1876,7 +1897,7 @@ export function FilerWorkspace({
    * 編集中テキストを現在の文字コードで保存し、成功時はモーダルを閉じて一覧を更新する。
    */
   const saveEditor = (): void => {
-    if (!editor || editor.readOnly) return
+    if (!editor) return
     if (editor.source === 'remote' && !activeTarget) return
     const { source, entry, content, encoding, bom } = editor
     const target = activeTarget
@@ -1920,10 +1941,10 @@ export function FilerWorkspace({
   const handleOpenWith = (paneKind: PaneKind, mode: OpenMode, entry: StorageEntry): void => {
     switch (mode) {
       case 'preview':
-        openInEditor(paneKind, entry, true)
+        openPreview(paneKind, entry)
         break
       case 'built-in':
-        openInEditor(paneKind, entry, false)
+        openInEditor(paneKind, entry)
         break
       case 'system-default':
         if (paneKind === 'local') void revealPath(entry.path, true)
@@ -2175,7 +2196,7 @@ export function FilerWorkspace({
     switch (id) {
       case 'open':
         // remote file の既定は Built-in Editor。
-        if (selection[0]?.type === 'file') openInEditor('remote', selection[0], false)
+        if (selection[0]?.type === 'file') openInEditor('remote', selection[0])
         break
       case 'download-local':
         handleDownloadToLocal(selection)
@@ -2523,11 +2544,7 @@ export function FilerWorkspace({
           className="editor-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={
-            editor.readOnly
-              ? t('editor.ariaPreview', { name: editor.entry.name })
-              : t('editor.ariaEdit', { name: editor.entry.name })
-          }
+          aria-label={t('editor.ariaEdit', { name: editor.entry.name })}
         >
           <div
             className="editor-modal editor-modal-floating"
@@ -2540,7 +2557,6 @@ export function FilerWorkspace({
             <header className="editor-header">
               {/* タイトル領域だけをドラッグ起点にする（header の操作系はドラッグを開始しない）。 */}
               <h2 className="editor-drag-handle" title={t('editor.dragToMove')} onPointerDown={startEditorDrag}>
-                {editor.readOnly ? t('editor.previewPrefix') : ''}
                 {editor.entry.name}
               </h2>
               <div className="editor-header-tools">
@@ -2601,14 +2617,13 @@ export function FilerWorkspace({
                   aria-label={t('editor.fileContents')}
                   value={editor.content}
                   spellCheck={false}
-                  readOnly={editor.readOnly}
                   disabled={editor.status === 'saving'}
                   autoFocus
                   onKeyDown={(event) => {
-                    // editor 固有: Mod+S で保存（preview は不可）、Escape で閉じる。
+                    // editor 固有: Mod+S で保存、Escape で閉じる。
                     if (event.key === 's' && (event.metaKey || event.ctrlKey)) {
                       event.preventDefault()
-                      if (!editor.readOnly) saveEditor()
+                      saveEditor()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
                       setEditor(null)
@@ -2627,13 +2642,11 @@ export function FilerWorkspace({
                     disabled={editor.status === 'saving'}
                     onClick={() => setEditor(null)}
                   >
-                    {editor.readOnly ? t('common.close') : t('common.cancel')}
+                    {t('common.cancel')}
                   </button>
-                  {!editor.readOnly && (
-                    <button type="button" disabled={editor.status === 'saving'} onClick={saveEditor}>
-                      {editor.status === 'saving' ? t('editor.saving') : t('common.save')}
-                    </button>
-                  )}
+                  <button type="button" disabled={editor.status === 'saving'} onClick={saveEditor}>
+                    {editor.status === 'saving' ? t('editor.saving') : t('common.save')}
+                  </button>
                 </div>
               </>
             )}

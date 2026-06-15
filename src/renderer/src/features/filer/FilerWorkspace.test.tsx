@@ -436,6 +436,7 @@ describe('FilerWorkspace ファイル操作', () => {
       value: {
         listStorage,
         listLocal,
+        openPreview: overrides.openPreview ?? vi.fn().mockResolvedValue(undefined),
         readText: overrides.readText ?? vi.fn().mockResolvedValue({ text: 'contents', encoding: 'utf-8', bom: false }),
         writeText: overrides.writeText ?? vi.fn().mockResolvedValue(undefined),
         pickDirectory: overrides.pickDirectory ?? vi.fn().mockResolvedValue('/chosen'),
@@ -734,24 +735,38 @@ describe('FilerWorkspace ファイル操作', () => {
     )
   })
 
-  it('リモートファイルのダブルクリックは既定の Built-in Editor を開く', async () => {
+  it('リモートファイルのダブルクリックは Preview（独立ウィンドウ）を開き Built-in Editor は開かない', async () => {
+    const openPreview = vi.fn().mockResolvedValue(undefined)
     const readText = vi.fn().mockResolvedValue({ text: 'remote body', encoding: 'utf-8', bom: false })
-    await renderWorkspace({ readText })
+    await renderWorkspace({ openPreview, readText })
 
     fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
 
-    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
-    expect(textarea.value).toBe('remote body')
-    expect(readText).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), '/a.txt', 'auto')
+    await waitFor(() =>
+      expect(openPreview).toHaveBeenCalledWith({
+        source: 'remote',
+        target: expect.objectContaining({ id: 'sftp-1' }),
+        path: '/a.txt',
+        name: 'a.txt',
+      })
+    )
+    // built-in editor は開かず、本文読み込みも行わない。
+    expect(screen.queryByLabelText('File contents')).toBeNull()
+    expect(readText).not.toHaveBeenCalled()
   })
 
-  it('ローカルファイルのダブルクリックは既定の System Default で開く', async () => {
+  it('ローカルファイルのダブルクリックは Preview を開き System Default では開かない', async () => {
+    const openPreview = vi.fn().mockResolvedValue(undefined)
     const openLocalPath = vi.fn().mockResolvedValue(undefined)
-    await renderWorkspace({ openLocalPath })
+    await renderWorkspace({ openPreview, openLocalPath })
 
     fireEvent.doubleClick(screen.getByText('draft.txt').closest('tr')!)
 
-    await waitFor(() => expect(openLocalPath).toHaveBeenCalledWith('/work/draft.txt'))
+    await waitFor(() =>
+      expect(openPreview).toHaveBeenCalledWith({ source: 'local', path: '/work/draft.txt', name: 'draft.txt' })
+    )
+    // System Default（openLocalPath）は呼ばれない。
+    expect(openLocalPath).not.toHaveBeenCalled()
   })
 
   it('ディレクトリのダブルクリックは open ではなくペイン内移動する', async () => {
@@ -783,7 +798,9 @@ describe('FilerWorkspace ファイル操作', () => {
   it('エディタモーダルは移動・リサイズ用の構造を持ち、初期は中央配置される', async () => {
     await renderWorkspace()
 
-    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+    // Built-in Editor は context menu の Open（既定アクション）で開く。
+    fireEvent.contextMenu(screen.getByText('a.txt').closest('tr')!, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
     await screen.findByLabelText('File contents')
 
     const modal = document.querySelector('.editor-modal-floating') as HTMLElement
@@ -801,7 +818,8 @@ describe('FilerWorkspace ファイル操作', () => {
   it('ヘッダのタイトルドラッグでモーダルを移動し、画面外はクランプする', async () => {
     await renderWorkspace()
 
-    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.contextMenu(screen.getByText('a.txt').closest('tr')!, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
     await screen.findByLabelText('File contents')
     const modal = document.querySelector('.editor-modal-floating') as HTMLElement
     const handle = modal.querySelector('.editor-drag-handle') as HTMLElement
@@ -827,7 +845,8 @@ describe('FilerWorkspace ファイル操作', () => {
   it('ドラッグ中にエディタを閉じても window リスナーが残らない', async () => {
     await renderWorkspace()
 
-    fireEvent.doubleClick(screen.getByText('a.txt').closest('tr')!)
+    fireEvent.contextMenu(screen.getByText('a.txt').closest('tr')!, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Enter' }))
     await screen.findByLabelText('File contents')
     const modal = document.querySelector('.editor-modal-floating') as HTMLElement
     const handle = modal.querySelector('.editor-drag-handle') as HTMLElement
@@ -1221,19 +1240,57 @@ describe('FilerWorkspace ファイル操作', () => {
     expect(await screen.findByText('modified')).toBeTruthy()
   })
 
-  it('Preview を選ぶと読み取り専用ビューア（Save なし）で開く', async () => {
+  it('Preview を選ぶと独立プレビューウィンドウを開き、built-in editor は開かない', async () => {
+    const openPreview = vi.fn().mockResolvedValue(undefined)
     const readText = vi.fn().mockResolvedValue({ text: 'view me', encoding: 'utf-8', bom: false })
-    await renderWorkspace({ readText })
+    await renderWorkspace({ openPreview, readText })
 
     const remoteRow = screen.getByText('a.txt').closest('tr')!
     fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Open… Ctrl+Enter' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /Preview/ }))
 
-    const textarea = (await screen.findByLabelText('File contents')) as HTMLTextAreaElement
-    expect(textarea.value).toBe('view me')
-    expect(textarea.readOnly).toBe(true)
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+    // 独立ウィンドウ起動要求が remote 種別 + path/name/target で呼ばれる。
+    await waitFor(() =>
+      expect(openPreview).toHaveBeenCalledWith({
+        source: 'remote',
+        target: expect.objectContaining({ id: 'sftp-1' }),
+        path: '/a.txt',
+        name: 'a.txt',
+      })
+    )
+    // built-in editor（textarea）は開かない。読み取りもしない。
+    expect(screen.queryByLabelText('File contents')).toBeNull()
+    expect(readText).not.toHaveBeenCalled()
+  })
+
+  it('local の Preview は target なし・絶対パスの request で独立ウィンドウを開く', async () => {
+    const openPreview = vi.fn().mockResolvedValue(undefined)
+    await renderWorkspace({ openPreview })
+
+    // ローカルペイン（renderWorkspace で表示済み）の draft.txt を Preview。
+    const localRow = screen.getByText('draft.txt').closest('tr')!
+    fireEvent.contextMenu(localRow, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open… Ctrl+Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Preview/ }))
+
+    await waitFor(() =>
+      expect(openPreview).toHaveBeenCalledWith({ source: 'local', path: '/work/draft.txt', name: 'draft.txt' })
+    )
+    // local request に target は含めない。
+    expect(openPreview.mock.calls[0][0]).not.toHaveProperty('target')
+  })
+
+  it('Preview 起動失敗は status bar にエラー表示する', async () => {
+    const openPreview = vi.fn().mockRejectedValue(new Error('preview boom'))
+    await renderWorkspace({ openPreview })
+
+    const remoteRow = screen.getByText('a.txt').closest('tr')!
+    fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open… Ctrl+Enter' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Preview/ }))
+
+    expect(await screen.findByText('preview boom')).toBeTruthy()
   })
 
   it('ローカルの Built-in Editor は local read/write を使う', async () => {
@@ -1272,7 +1329,7 @@ describe('FilerWorkspace ファイル操作', () => {
     await waitFor(() => expect(chooseApplication).toHaveBeenCalledWith('/work/draft.txt'))
   })
 
-  it('ローカルファイルの既定 Open（Enter/ダブルクリック）は System Default で開く', async () => {
+  it('ローカルファイルの既定 Open（Enter/context menu）は System Default で開く', async () => {
     const openLocalPath = vi.fn().mockResolvedValue(undefined)
     await renderWorkspace({ openLocalPath })
 
