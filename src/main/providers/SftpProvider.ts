@@ -1,6 +1,6 @@
 import SftpClient from 'ssh2-sftp-client'
 
-import type { SftpConnectionTarget } from '../../shared/connections'
+import type { SftpConnection } from '../../shared/connections'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type { StorageProvider } from './StorageProvider'
 import { joinSftpPath, joinVirtualPath, normalizeVirtualPath } from './pathUtils'
@@ -15,7 +15,7 @@ export function sftpTimestampToIso(timestamp: number): string | undefined {
 }
 
 export class SftpProvider implements StorageProvider {
-  constructor(private readonly target: SftpConnectionTarget) {}
+  constructor(private readonly target: SftpConnection) {}
 
   /**
    * 操作ごとに短命な接続を張る。

@@ -15,9 +15,6 @@ const target: ConnectionTarget = {
   name: 'Archive',
   kind: 's3',
   region: 'ap-northeast-1',
-  accessKeyId: 'access-key',
-  secretAccessKey: 'secret-key',
-  sessionToken: '',
 }
 
 const sftp = (id: string): ConnectionTarget => ({
@@ -27,7 +24,6 @@ const sftp = (id: string): ConnectionTarget => ({
   host: 'example.com',
   port: 22,
   username: 'u',
-  password: 'p',
   rootPath: '/',
 })
 

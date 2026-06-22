@@ -179,4 +179,25 @@ describe('preload api', () => {
     expect(listener).toHaveBeenCalledTimes(1)
     expect(listener).toHaveBeenCalledWith('forward')
   })
+
+  it('接続の保存/読込/テストは IPC へ素通しし、戻り値は main のメタデータをそのまま返す（secret は復号しない）', async () => {
+    await import('./index')
+    const api = exposeMock.mock.calls[0][1] as Record<string, (...args: unknown[]) => unknown>
+
+    // main は機密でないメタデータ配列だけを返す契約。preload は復号や secret 解決を一切行わない。
+    const metadataOnly = [{ id: 'sftp-1', name: 'SFTP', kind: 'sftp', host: 'h', port: 22, username: 'u', rootPath: '/' }]
+    invokeMock.mockResolvedValue(metadataOnly)
+
+    const draft = { ...target } // password を含む下書き
+    const saved = await api.saveConnections([draft])
+    await api.loadConnections()
+    await api.testConnection(draft)
+
+    // 下書きはそのまま main へ渡し（secret の暗号化/分離は main 側の責務）、
+    expect(invokeMock).toHaveBeenCalledWith('connections:save', [draft])
+    expect(invokeMock).toHaveBeenCalledWith('connections:load')
+    expect(invokeMock).toHaveBeenCalledWith('connections:test', draft)
+    // 戻り値は main のメタデータ配列をそのまま返す（preload で secret を付与しない）。
+    expect(saved).toBe(metadataOnly)
+  })
 })

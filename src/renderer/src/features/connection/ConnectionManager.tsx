@@ -5,14 +5,14 @@ import { useTranslation } from '../i18n/I18nContext'
 import { ConnectionForm } from './ConnectionForm'
 import { reorderConnections, type DropPosition } from './connectionReorder'
 import { ConnectionSelect } from './ConnectionSelect'
-import type { ConnectionTarget } from './connectionTypes'
+import type { ConnectionDraft, ConnectionTarget } from './connectionTypes'
 
 interface ConnectionManagerProps {
   targets: ConnectionTarget[]
   /** 削除確認の有無に使う設定。未指定時は既定（確認あり）。 */
   settings?: AppSettings
   onSelect: (target: ConnectionTarget) => void
-  onSave: (target: ConnectionTarget) => Promise<void> | void
+  onSave: (draft: ConnectionDraft) => Promise<void> | void
   onDelete: (target: ConnectionTarget) => Promise<void> | void
   variant?: 'welcome' | 'tab'
   /** 並び替え後の配列を受け取り永続化する（welcome のみ）。 */

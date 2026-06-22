@@ -3,8 +3,11 @@
  * main/renderer間で共有する契約を再公開する。
  */
 export type {
+  ConnectionDraft,
   ConnectionTarget,
   ConnectionTestResult,
+  S3ConnectionDraft,
   S3ConnectionTarget,
+  SftpConnectionDraft,
   SftpConnectionTarget,
 } from '../../../../shared/connections'

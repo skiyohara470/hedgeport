@@ -50,7 +50,7 @@ import {
 import { listLocalEntries } from './localFileListing'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { createLocalDirectory, createRemoteDirectory, renameLocal, renameRemote } from './storageMutations'
-import type { ConnectionTarget } from '../shared/connections'
+import type { ConnectionDraft, ConnectionTarget } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
 import {
   MAX_PREVIEW_TEXT_BYTES,
@@ -219,8 +219,10 @@ app.whenReady().then(() => {
     handlePreviewSave(previewSessions, event.sender.id, request, previewReaders, previewWriters)
   )
   ipcMain.handle('connections:load', loadConnections)
-  ipcMain.handle('connections:save', (_event, targets: ConnectionTarget[]) => saveConnections(targets))
-  ipcMain.handle('connections:test', (_event, target: ConnectionTarget) => testConnection(target))
+  // 保存は secret を含み得る下書きを受け取り、main 側で secret を暗号化ストアへ分離し、
+  // 機密でないメタデータ配列を返す（renderer の state は secret を保持しない）。
+  ipcMain.handle('connections:save', (_event, drafts: ConnectionDraft[]) => saveConnections(drafts))
+  ipcMain.handle('connections:test', (_event, draft: ConnectionDraft) => testConnection(draft))
   // アプリ設定のロード / 保存（全体置換、main 側で再検証・正規化）。
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_event, settings: unknown) => saveSettings(settings))

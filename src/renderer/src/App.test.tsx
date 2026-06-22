@@ -33,7 +33,6 @@ const sftp = (id: string, name = id): ConnectionTarget => ({
   host: 'example.com',
   port: 22,
   username: 'u',
-  password: 'p',
   rootPath: '/',
 })
 
@@ -43,7 +42,8 @@ const sftp = (id: string, name = id): ConnectionTarget => ({
 const setupApi = (overrides: Partial<Record<string, ReturnType<typeof vi.fn>>>, initial: ConnectionTarget[]) => {
   const api = {
     loadConnections: vi.fn().mockResolvedValue(initial),
-    saveConnections: vi.fn().mockResolvedValue(undefined),
+    // 保存はメタデータ配列を返す契約。既定では渡された下書きをそのまま返す。
+    saveConnections: vi.fn().mockImplementation((drafts: unknown) => Promise.resolve(drafts)),
     loadSettings: vi.fn().mockResolvedValue(createDefaultSettings('en')),
     saveSettings: vi.fn().mockImplementation((settings: unknown) => Promise.resolve(settings)),
     ...overrides,
@@ -172,7 +172,7 @@ describe('App settings', () => {
 
 describe('App connection reorder (drag & drop)', () => {
   it('drop で並び替え後の順序を保存し、一覧へ反映する', async () => {
-    const saveConnections = vi.fn().mockResolvedValue(undefined)
+    const saveConnections = vi.fn().mockImplementation((drafts: unknown) => Promise.resolve(drafts))
     setupApi({ saveConnections }, [sftp('a'), sftp('b'), sftp('c')])
 
     render(<App />)
@@ -210,10 +210,11 @@ describe('App connection reorder (drag & drop)', () => {
 
   it('保存中は drag handle を draggable=false にして再ドラッグを抑止する', async () => {
     let resolveSave: () => void = () => undefined
+    // 保存完了時はメタデータ配列を返す契約のため、渡された下書きで解決する。
     const saveConnections = vi.fn().mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveSave = resolve
+      (drafts: unknown) =>
+        new Promise<unknown>((resolve) => {
+          resolveSave = () => resolve(drafts)
         })
     )
     setupApi({ saveConnections }, [sftp('a'), sftp('b'), sftp('c')])

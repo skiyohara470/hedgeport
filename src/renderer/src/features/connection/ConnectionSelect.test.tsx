@@ -21,7 +21,6 @@ const targets: ConnectionTarget[] = [
     host: 'sftp.example.com',
     port: 22,
     username: 'user',
-    password: '',
     rootPath: '/',
   },
   {
@@ -29,9 +28,6 @@ const targets: ConnectionTarget[] = [
     name: 'バックアップS3',
     kind: 's3',
     region: 'ap-northeast-1',
-    accessKeyId: 'access-key',
-    secretAccessKey: 'secret-key',
-    sessionToken: '',
   },
 ]
 

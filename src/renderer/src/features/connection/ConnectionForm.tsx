@@ -2,11 +2,11 @@ import { useState, type FormEvent } from 'react'
 
 import { useTranslation } from '../i18n/I18nContext'
 import { resolveMessage, type Message, type TranslationKey } from '../i18n/translations'
-import type { ConnectionTarget } from './connectionTypes'
+import type { ConnectionDraft, ConnectionTarget } from './connectionTypes'
 
 interface ConnectionFormProps {
   target?: ConnectionTarget
-  onSave: (target: ConnectionTarget) => Promise<void> | void
+  onSave: (draft: ConnectionDraft) => Promise<void> | void
   onCancel: () => void
   onDelete?: () => Promise<void> | void
 }
@@ -32,22 +32,27 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
   const [host, setHost] = useState(target?.kind === 'sftp' ? target.host : '')
   const [port, setPort] = useState(target?.kind === 'sftp' ? String(target.port) : '22')
   const [username, setUsername] = useState(target?.kind === 'sftp' ? target.username : '')
-  const [password, setPassword] = useState(target?.kind === 'sftp' ? target.password : '')
+  // secret（password / アクセスキー類）は renderer へ渡されないため、編集時も空欄で開始する。
+  // 編集時に空欄のまま保存すると、main 側で既存の暗号化済み secret が維持される。
+  const [password, setPassword] = useState('')
   const [rootPath, setRootPath] = useState(target?.kind === 'sftp' ? target.rootPath : '/')
   const [region, setRegion] = useState(target?.kind === 's3' ? target.region : 'ap-northeast-1')
-  const [accessKeyId, setAccessKeyId] = useState(target?.kind === 's3' ? target.accessKeyId : '')
-  const [secretAccessKey, setSecretAccessKey] = useState(target?.kind === 's3' ? target.secretAccessKey : '')
-  const [sessionToken, setSessionToken] = useState(target?.kind === 's3' ? target.sessionToken : '')
+  const [accessKeyId, setAccessKeyId] = useState('')
+  const [secretAccessKey, setSecretAccessKey] = useState('')
+  const [sessionToken, setSessionToken] = useState('')
   const [testResult, setTestResult] = useState<{ ok: boolean; message: Message } | null>(null)
   const [formError, setFormError] = useState<Message | null>(null)
   const [isTesting, setIsTesting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
+  // 編集中（既存接続）か。編集時は secret 空欄を許容する（既存の暗号化 secret を維持）。
+  const isEditing = Boolean(target)
+
   /**
-   * 現在の入力値を ConnectionTarget 契約へ詰め直す。
-   * UI 上の文字列入力を main 側へ渡す前の整形ポイント。
+   * 現在の入力値を ConnectionDraft 契約へ詰め直す。
+   * UI 上の文字列入力を main 側へ渡す前の整形ポイント。secret は空欄なら維持扱いになる。
    */
-  const buildTarget = (): ConnectionTarget => {
+  const buildTarget = (): ConnectionDraft => {
     const id = target?.id ?? createId()
     const trimmedName = name.trim()
 
@@ -79,8 +84,9 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
 
   /**
    * 接続種別ごとの必須項目を確認し、最初のエラー翻訳キーだけ返す。
+   * secret は新規作成時のみ必須。編集時は空欄なら既存 secret を維持するため必須にしない。
    */
-  const validate = (connection: ConnectionTarget): TranslationKey | null => {
+  const validate = (connection: ConnectionDraft): TranslationKey | null => {
     if (!connection.name) return 'cf.errDisplayName'
     if (connection.kind === 'sftp') {
       if (!connection.host || !connection.username || !connection.rootPath) return 'cf.errSftpFields'
@@ -89,7 +95,8 @@ export function ConnectionForm({ target, onSave, onCancel, onDelete }: Connectio
       }
       return null
     }
-    if (!connection.region || !connection.accessKeyId || !connection.secretAccessKey) {
+    if (!connection.region) return 'cf.errS3Fields'
+    if (!isEditing && (!connection.accessKeyId || !connection.secretAccessKey)) {
       return 'cf.errS3Fields'
     }
     return null

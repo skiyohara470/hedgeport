@@ -10,7 +10,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3'
 
-import type { S3ConnectionTarget } from '../../shared/connections'
+import type { S3Connection } from '../../shared/connections'
 import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type { StorageProvider } from './StorageProvider'
 import { joinVirtualPath, normalizeVirtualPath, parseS3VirtualPath } from './pathUtils'
@@ -68,7 +68,7 @@ export async function listRegionBuckets(client: S3Client, region: string): Promi
 const DELETE_CHUNK_SIZE = 1000
 
 export class S3Provider implements StorageProvider {
-  constructor(private readonly target: S3ConnectionTarget) {}
+  constructor(private readonly target: S3Connection) {}
 
   /**
    * 認証情報を接続設定から毎回組み立てる。
