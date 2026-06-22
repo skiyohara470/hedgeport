@@ -1,4 +1,4 @@
-import type { ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
+import type { ConnectionDraft, ConnectionTarget, ConnectionTestResult } from '../../shared/connections'
 import type { HistoryDirection } from '../../shared/navigation'
 import type {
   PreviewDocument,
@@ -34,8 +34,8 @@ declare global {
     savePreview: (request: PreviewSaveRequest) => Promise<PreviewSaveResult>
     listLocal: (path?: string) => Promise<LocalDirectory>
     loadConnections: () => Promise<ConnectionTarget[]>
-    saveConnections: (targets: ConnectionTarget[]) => Promise<void>
-    testConnection: (target: ConnectionTarget) => Promise<ConnectionTestResult>
+    saveConnections: (drafts: ConnectionDraft[]) => Promise<ConnectionTarget[]>
+    testConnection: (draft: ConnectionDraft) => Promise<ConnectionTestResult>
     loadSettings: () => Promise<AppSettings>
     saveSettings: (settings: AppSettings) => Promise<AppSettings>
     onHistoryNavigation: (listener: (direction: HistoryDirection) => void) => () => void

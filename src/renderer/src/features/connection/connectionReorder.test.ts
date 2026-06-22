@@ -10,7 +10,6 @@ const item = (id: string): ConnectionTarget => ({
   host: 'example.com',
   port: 22,
   username: 'u',
-  password: 'p',
   rootPath: '/',
 })
 

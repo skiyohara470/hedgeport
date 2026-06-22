@@ -93,10 +93,11 @@ S3は接続設定でバケットを固定せず、接続後の最初の画面に
 
 接続情報とアプリ設定はElectronの`userData`ディレクトリへ保存されます。
 
-- `connections.json`: 接続情報
+- `connections.json`: 接続情報（機密でないメタデータのみ。secret は含まない）
+- `connectionSecrets.json`: SFTPパスワード・AWS認証情報（`safeStorage` で暗号化した値のみ）
 - `settings.json`: テーマ、表示言語などのアプリ設定
 
-ファイル権限は対応環境で所有者のみに制限しますが、現在、SFTPパスワードやAWS認証情報は暗号化されていません。共有PCや信頼できない環境での利用は避けてください。認証情報の暗号化は今後の対応予定です。
+認証情報（SFTPパスワード、S3の`accessKeyId`/`secretAccessKey`/`sessionToken`）はElectronの`safeStorage`（OSの暗号化）で暗号化して`connections.json`とは別ファイルへ保存し、`connections.json`には機密でないメタデータだけを残します。復号はメインプロセス内・接続時のみで、preload/rendererへ復号値は渡しません。`safeStorage`が利用できない環境では認証情報の保存・復号・移行は明確に失敗し、平文での保存は行いません（平文フォールバックなし）。旧形式の平文`connections.json`は初回読み込み時に暗号化ストアへ自動移行します。ファイル権限は対応環境で所有者のみに制限します。
 
 ## 現在の制約
 

@@ -28,7 +28,9 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `index.ts`
   Electron 起動、ウィンドウ生成、IPC 登録の入口。
 - `connectionStore.ts`
-  接続設定のロード / 保存。`migrateConnectionTarget` で legacy S3（bucket / prefix 付き）を load / save 両方で正規化する。
+  接続設定（機密でないメタデータ）のロード / 保存。`connections.json` には secret を残さず、`extractSecrets` でメタdata と secret を分離する（legacy S3 の bucket / prefix もここで除去）。`saveConnections` は secret を暗号化ストアへ分け、下書きに含まれない id の secret は prune し、保存後のメタデータ配列を返す（renderer の state は secret を持たない）。`loadConnections` は旧形式（平文 secret 入り `connections.json`）を検出すると、暗号化ストアを先に書き → 成功後に平文を除いた `connections.json` を書く順で移行してから返す（失敗時にファイルを部分的に書き換えない）。secret を含む保存・移行は `safeStorage` 必須で、利用不可なら平文保存せず明確に失敗する。
+- `connectionSecrets.ts`
+  認証情報（secret）専用の暗号化ストア（`userData/connectionSecrets.json`）。`safeStorage` で暗号化した値だけを `{ version, secrets: { <id>: base64 } }` 形式で保存する。`extractSecrets`（下書き/レコード→メタデータ + secret 分離）・`parseSecretEnvelope`/`serializeSecretEnvelope`（envelope の検証・直列化）は electron 非依存の純関数。`requireEncryptionAvailable`（不可なら明確に throw）、`encryptSecrets`、`getStoredSecrets`（同期復号）、`readEncryptedMap`（同期・パス単位キャッシュ）／`writeEncryptedMap`（atomic・0600）を提供。復号はメインプロセス内のみで行い、preload/renderer へ復号値を渡さない。
 - `navigationInput.ts`
   マウス戻る/進みの OS イベント→履歴方向の写像（electron 非依存の純関数。`mapAppCommand` / `mapSwipeDirection` / `handleAppCommand` / `handleSwipe`）。`index.ts` がメインウィンドウ（プレビューウィンドウは対象外）の `app-command`（Win/Linux）と `swipe`（macOS）を捕捉し、Chromium 既定遷移を preventDefault して `history:navigate` を renderer へ送る。
 - `previewSession.ts`
@@ -61,7 +63,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `externalEdit.ts`
   リモート外部編集セッション。`target.id` + canonical remote path で一意管理し、start / upload / discard を per-key で**直列化**（single-flight）して二重生成や競合を防ぐ。app 所有の per-session temp（`getPath(temp)/hedgeport-edit/<uuid>`、dir 0700 / file 0600、basename のみで path traversal 防止）へ download して外部アプリ起動。mkdir 後の失敗（writeFile / launch）は**トランザクション的に巻き戻し**（map 登録解除＋temp 削除）再利用可能な残骸を残さない。Upload は temp を検証 handle で読み戻し、リモートの**削除 / 型変更 / メタデータ変化（modifiedAt/size）を conflict として block**。dirty は temp の stat スナップショット（mtime/size）と比較して main が判定し、`external:list` で id/status/dirty のみ公開（temp パスは非公開）。Discard で temp 片付け、アプリ終了は `will-quit` を一度保留して cleanup を await してから再 quit（失敗は非致命でログ）。外部プロセス終了は upload/discard を意味しない。
 - `providers/`
-  ストレージ抽象と具体実装。
+  ストレージ抽象と具体実装。`createStorageProvider` は機密でないメタデータ（`ConnectionTarget`）に `connectionSecrets.getStoredSecrets` で復号した secret を結合した解決済み接続（`ResolvedConnection`）を作り、provider へ接続時にだけ渡す（S3 の secret 未保存は明確に失敗、SFTP は password 任意で空可）。`SftpProvider` / `S3Provider` は `SftpConnection` / `S3Connection`（メタデータ + secret）を受け取る。
 
 ### `src/preload`
 
@@ -114,9 +116,9 @@ renderer から main への通信は、必ず preload を経由します。
 | `savePreview(request)`                                    | `ipcRenderer.invoke('preview:save', request)`                            | `ipcMain.handle('preview:save', ...)`                  | 送信元束縛 session へ保存（target/path 非送信。競合検知・上書き可否は main 側。saved{revision,byteLength} / conflict{token} を返す） |
 | `platform`                                                | `process.platform`（読み取り専用値）                                     | `process.platform`                                     | OS 種別（UA 非依存）。タイトルバー方針の出し分けに使う                                                                               |
 | `onFullScreenChange(listener)`                            | `ipcRenderer.on('window:fullscreen', ...)`                               | `window.webContents.send('window:fullscreen', value)`  | ウィンドウ全画面状態の購読（boolean のみ・解除関数を返す）                                                                           |
-| `loadConnections()`                                       | `ipcRenderer.invoke('connections:load')`                                 | `ipcMain.handle('connections:load', ...)`              | 接続設定を読む                                                                                                                       |
-| `saveConnections(targets)`                                | `ipcRenderer.invoke('connections:save', targets)`                        | `ipcMain.handle('connections:save', ...)`              | 接続設定を保存する                                                                                                                   |
-| `testConnection(target)`                                  | `ipcRenderer.invoke('connections:test', target)`                         | `ipcMain.handle('connections:test', ...)`              | 接続テスト                                                                                                                           |
+| `loadConnections()`                                       | `ipcRenderer.invoke('connections:load')`                                 | `ipcMain.handle('connections:load', ...)`              | 機密でない接続メタデータを読む（secret は返さない。旧平文形式は読込時に暗号化ストアへ移行）                                          |
+| `saveConnections(drafts)`                                 | `ipcRenderer.invoke('connections:save', drafts)`                         | `ipcMain.handle('connections:save', ...)`              | 下書き（secret 任意）を保存。secret は暗号化ストアへ分離し、機密でないメタデータ配列を返す（空欄 secret は既存維持・不要 id は prune）|
+| `testConnection(draft)`                                   | `ipcRenderer.invoke('connections:test', draft)`                          | `ipcMain.handle('connections:test', ...)`              | 接続テスト（下書きの secret か、無ければ保存済み secret を main 内で解決して使う）                                                   |
 | `loadSettings()`                                          | `ipcRenderer.invoke('settings:load')`                                    | `ipcMain.handle('settings:load', ...)`                 | アプリ設定を読む（無ければ既定）                                                                                                     |
 | `saveSettings(settings)`                                  | `ipcRenderer.invoke('settings:save', settings)`                          | `ipcMain.handle('settings:save', ...)`                 | アプリ設定を保存（全体置換・main 再検証）                                                                                            |
 | `listStorage(target, path)`                               | `ipcRenderer.invoke('storage:list', target, path)`                       | `ipcMain.handle('storage:list', ...)`                  | SFTP / S3 一覧取得（S3 のルート `/` は bucket 一覧）                                                                                 |
@@ -176,16 +178,25 @@ SFTP と S3 は実装が異なりますが、呼び出し側は同じ操作で�
 
 ### `ConnectionTarget`
 
-接続先の設定を表す合併型です。
+接続先の「機密でないメタデータ」を表す合併型です。secret は含まず、`connections.json` への永続化・renderer 保持・ストレージ操作 IPC の往復はこの形状で行います。
 
 - `SftpConnectionTarget`
-  `host`, `port`, `username`, `password`, `rootPath`
+  `host`, `port`, `username`, `rootPath`
 - `S3ConnectionTarget`（アカウント/認証情報単位。bucket / prefix は持たない）
-  `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`
+  `region`
   仮想パスは `/<bucket>/<key...>`。ルート `/` は region 内の bucket 一覧、`/<bucket>` は bucket ルート。
-  legacy レコード（bucket / prefix 付き）は `connectionStore.migrateConnectionTarget` が load / save の両方で正規化して除去する（IPC 等から legacy shape が渡っても保存 JSON には bucket / prefix を残さない）。
+  legacy レコード（bucket / prefix 付き）や旧形式の平文 secret は `connectionStore.extractSecrets` が load / save の両方でメタデータへ正規化して除去する（保存 JSON に bucket / prefix / secret を残さない）。
 
 どちらも共通で `id`, `name`, `lastLocalPath` を持ちます。
+
+secret は別型として分離します：
+
+- `SftpSecrets`（`password`）/ `S3Secrets`（`accessKeyId`, `secretAccessKey`, `sessionToken`）
+  `connectionSecrets.json` に `safeStorage` 暗号化値としてのみ保存し、main 内でのみ復号する。
+- `ResolvedConnection`（`SftpConnection` / `S3Connection` = メタデータ + secret）
+  provider が接続に使う、main 内専用の解決済み接続。
+- `ConnectionDraft`（メタデータ + secret 任意）
+  renderer から作成 / 編集 / 疎通確認時に渡す下書き。編集で secret 欄が空なら既存 secret を維持する。
 
 ### `StorageEntry`
 
@@ -245,8 +256,8 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 
 ## 現状の注意点
 
-- 接続情報は `userData/connections.json` に保存している。
-- ファイル権限は `0600` にしているが、認証情報の暗号化はまだ未対応。
+- 接続の機密でないメタデータは `userData/connections.json` に保存し、認証情報（secret）は `userData/connectionSecrets.json` に `safeStorage` 暗号化値としてのみ保存している（復号は main 内・接続時のみ。preload/renderer へ復号値は渡さない）。`safeStorage` 不可なら保存・復号・移行は明確に失敗し平文保存しない。旧形式の平文 `connections.json` は読込時に暗号化ストアへ移行する。
+- ファイル権限は両ファイルとも `0600`。
 - 別ウィンドウのプレビュー画面は実ファイルを表示する（local/remote、既定は読み取り専用ビューア）。既定 Open または Open… > Preview が `openPreview(request)` を呼んで独立ウィンドウを開き、main は session（送信元ウィンドウ束縛）越しに `readRemoteTextWithRevision`/`readLocalTextWithRevision` を再利用して読む。認証情報・ローカル絶対パスは URL/hash/query に載せない。ウィンドウ内検索は Ctrl/Cmd+F。プレビューウィンドウ自身の「編集」ボタンでその場編集に切り替えられる（1 MiB 以下のみ。`savePreview` で local/SFTP/S3 へ保存、競合検知は main 側、Ctrl/Cmd+S 保存、未保存クローズは確認）。ファイラー内の Open… > Built-in Editor も従来どおり利用でき、保存後に一覧を再ロードする。プレビューウィンドウの diff は未実装。
 - 複数選択に対応。context menu / toolbar / ショートカットは現在の選択全体に作用する。右クリックは対象が選択内なら選択を維持、選択外ならその 1 件へ置換する。Rename / Open は単一選択時のみ有効。
 - 転送（download / upload）と copy はファイルのみ対象。ディレクトリの一括転送 / copy は対象外（rename / delete はディレクトリも対象）。delete の directory は SFTP / local が非再帰（非空はエラー）、S3 は prefix 配下を一括削除。

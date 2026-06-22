@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
-import type { ConnectionTarget } from '../shared/connections'
+import type { ConnectionDraft, ConnectionTarget } from '../shared/connections'
 import { isHistoryDirection, type HistoryDirection } from '../shared/navigation'
 import type {
   PreviewDocument,
@@ -47,8 +47,10 @@ const api = {
   savePreview: (request: PreviewSaveRequest): Promise<PreviewSaveResult> => ipcRenderer.invoke('preview:save', request),
   listLocal: (path?: string) => ipcRenderer.invoke('local:list', path),
   loadConnections: (): Promise<ConnectionTarget[]> => ipcRenderer.invoke('connections:load'),
-  saveConnections: (targets: ConnectionTarget[]): Promise<void> => ipcRenderer.invoke('connections:save', targets),
-  testConnection: (target: ConnectionTarget) => ipcRenderer.invoke('connections:test', target),
+  // 保存は secret を含み得る下書きを渡し、secret を除いたメタデータ配列を受け取る。
+  saveConnections: (drafts: ConnectionDraft[]): Promise<ConnectionTarget[]> =>
+    ipcRenderer.invoke('connections:save', drafts),
+  testConnection: (draft: ConnectionDraft) => ipcRenderer.invoke('connections:test', draft),
   loadSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:load'),
   saveSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:save', settings),
   // マウス戻る/進む（main で捕捉）を購読する。direction だけを renderer へ渡し、解除関数を返す。

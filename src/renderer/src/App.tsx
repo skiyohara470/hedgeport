@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { createDefaultSettings, type AppSettings } from '../../shared/settings'
 import { ConnectionManager } from './features/connection/ConnectionManager'
-import type { ConnectionTarget } from './features/connection/connectionTypes'
+import type { ConnectionDraft, ConnectionTarget } from './features/connection/connectionTypes'
 import { FilerWorkspace } from './features/filer/FilerWorkspace'
 import { Icon } from './features/icons/Icon'
 import { I18nProvider } from './features/i18n/I18nContext'
@@ -66,15 +66,19 @@ export function App() {
 
   /**
    * 新規追加と既存更新を同じ保存経路で扱う。
+   * 下書きには secret が含まれ得るが、main 側で分離・暗号化されるため、戻り値の
+   * 機密でないメタデータ配列で state を確定する（renderer の state に secret を残さない）。
    * 保存後は一覧と選択中ターゲットの両方を同期する。
    */
-  const saveTarget = async (target: ConnectionTarget): Promise<void> => {
-    const exists = targets.some((item) => item.id === target.id)
-    const next = exists ? targets.map((item) => (item.id === target.id ? target : item)) : [...targets, target]
-    await window.hedgeport.saveConnections(next)
-    setTargets(next)
+  const saveTarget = async (draft: ConnectionDraft): Promise<void> => {
+    const exists = targets.some((item) => item.id === draft.id)
+    const next: ConnectionDraft[] = exists
+      ? targets.map((item) => (item.id === draft.id ? draft : item))
+      : [...targets, draft]
+    const saved = await window.hedgeport.saveConnections(next)
+    setTargets(saved)
     setStorageError(null)
-    setSelectedTarget((current) => (current?.id === target.id ? target : current))
+    setSelectedTarget((current) => (current ? (saved.find((item) => item.id === current.id) ?? current) : current))
   }
 
   /**
@@ -82,8 +86,8 @@ export function App() {
    */
   const deleteTarget = async (target: ConnectionTarget): Promise<void> => {
     const next = targets.filter((item) => item.id !== target.id)
-    await window.hedgeport.saveConnections(next)
-    setTargets(next)
+    const saved = await window.hedgeport.saveConnections(next)
+    setTargets(saved)
     setStorageError(null)
     setSelectedTarget((current) => (current?.id === target.id ? null : current))
   }
@@ -95,8 +99,8 @@ export function App() {
   const reorderTargets = async (next: ConnectionTarget[]): Promise<void> => {
     try {
       setReorderBusy(true)
-      await window.hedgeport.saveConnections(next)
-      setTargets(next)
+      const saved = await window.hedgeport.saveConnections(next)
+      setTargets(saved)
       setStorageError(null)
     } catch (error) {
       setStorageError(error instanceof Error ? { raw: error.message } : { key: 'connection.couldNotReorder' })

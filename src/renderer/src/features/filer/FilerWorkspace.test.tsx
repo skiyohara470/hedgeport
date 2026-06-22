@@ -32,7 +32,6 @@ const target: ConnectionTarget = {
   host: 'sftp.example.com',
   port: 22,
   username: 'user',
-  password: 'password',
   rootPath: '/exports',
 }
 
@@ -333,9 +332,6 @@ describe('RemoteFilePane', () => {
       name: 'Account S3',
       kind: 's3',
       region: 'ap-northeast-1',
-      accessKeyId: 'AKIA...',
-      secretAccessKey: 'secret',
-      sessionToken: '',
     }
     const listStorage = vi
       .fn()
@@ -381,9 +377,6 @@ describe('RemoteFilePane', () => {
       name: 'Account S3',
       kind: 's3',
       region: 'ap-northeast-1',
-      accessKeyId: 'AKIA...',
-      secretAccessKey: 'secret',
-      sessionToken: '',
     }
     const listStorage = vi.fn().mockResolvedValue([])
     Object.defineProperty(window, 'hedgeport', { configurable: true, value: { listStorage } })

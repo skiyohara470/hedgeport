@@ -73,7 +73,6 @@ describe('ConnectionForm', () => {
       host: 'old.example.com',
       port: 22,
       username: 'old-user',
-      password: 'old-password',
       rootPath: '/',
       lastLocalPath: '/workspace',
     }
@@ -84,10 +83,13 @@ describe('ConnectionForm', () => {
     fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'new.example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
+    // 編集時、secret 欄は空欄で開始する。空欄のまま保存すると draft の password は空文字になり、
+    // main 側で既存の暗号化 secret が維持される。
     expect(onSave).toHaveBeenCalledWith({
       ...target,
       name: 'New name',
       host: 'new.example.com',
+      password: '',
     })
     expect(screen.queryByLabelText('SFTP')).toBeNull()
     expect(screen.queryByLabelText('S3')).toBeNull()
@@ -111,9 +113,6 @@ describe('ConnectionForm', () => {
       name: 'Archive',
       kind: 's3',
       region: 'ap-northeast-1',
-      accessKeyId: 'access-key',
-      secretAccessKey: 'secret-key',
-      sessionToken: '',
     }
     const onDelete = vi.fn()
     render(<ConnectionForm target={target} onSave={vi.fn()} onCancel={vi.fn()} onDelete={onDelete} />)

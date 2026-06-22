@@ -34,7 +34,6 @@ Implemented:
 
 Known foundations that still need work:
 
-- Credentials are stored in a `0600` JSON file but are not encrypted.
 - Large transfers currently read whole files into memory.
 - Transfer progress, cancellation, retry, and resume are not implemented.
 - The standalone preview window shows real files with in-preview search; diff in
@@ -96,6 +95,19 @@ Preferred direction:
 - Keep non-secret connection metadata separate from encrypted secret values.
 - Migrate existing plaintext records without losing connections.
 - Define behavior when secure storage is unavailable.
+
+Status: implemented. `connections.json` holds only non-secret metadata; SFTP
+passwords and S3 `accessKeyId` / `secretAccessKey` / `sessionToken` are stored
+in a separate `userData/connectionSecrets.json` as `safeStorage`-encrypted
+values (`main/connectionSecrets.ts`). Secrets are decrypted only in the main
+process at connection time (`createStorageProvider` → provider) and never cross
+the preload/renderer boundary. `safeStorage` is mandatory: when
+`isEncryptionAvailable()` is false, saving / decrypting / migration fails clearly
+with no plaintext fallback and no master password. Existing plaintext records are
+migrated on load (encrypt into the secret store, then strip plaintext from
+`connections.json`); migration writes the secret store first and only rewrites
+`connections.json` on success, so a failure never leaves files partially rewritten.
+Direct OS credential-store integration and a master password remain out of scope.
 
 This should be completed before connection export is treated as a general
 sharing feature.
