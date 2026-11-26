@@ -1,7 +1,7 @@
 ---
 type: security
 title: セキュリティ境界
-description: HedgePort で secret、filesystem、IPC を扱うときの安全境界。
+description: HedgePort で認証情報、ファイルシステム、IPC を扱うときの安全境界。
 tags: [security, ipc, credentials]
 status: active
 ---
@@ -30,12 +30,15 @@ SFTP password、S3 `accessKeyId` / `secretAccessKey` / `sessionToken` は secret
 
 `safeStorage.isEncryptionAvailable()` が false の場合、secret 保存・復号・migration は失敗させます。平文 fallback と master password は現スコープ外です。
 
+復号した secret は接続利用のため main process のメモリ内にキャッシュし、アプリ終了時に破棄します。暗号化値が更新された場合はキャッシュを無効化します。macOS では Keychain へのアクセス許可を求められることがあります。
+
 ## IPC 通信
 
 preload は narrow API bridge です。renderer に `ipcRenderer` を渡しません。
 
 IPC handler は次を守ります。
 
+- BrowserWindow は `contextIsolation` を有効、`nodeIntegration` を無効にする。アプリ外への遷移は拒否し、外部ブラウザへ渡す場合も `http:` / `https:` / `mailto:` に限定する。
 - renderer の TypeScript 型を信用しない。
 - path、encoding、connection target、preview request は main で再検証する。
 - preview save は `event.sender.id` に束縛された session だけを使う。

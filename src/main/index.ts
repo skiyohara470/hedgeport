@@ -1,4 +1,5 @@
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 
 import { batchDeleteLocal, batchDeleteRemote, batchDownloadToDirectory, batchUpload } from './batchOperations'
@@ -64,6 +65,57 @@ import {
 const rendererUrl = process.env.ELECTRON_RENDERER_URL
 
 /**
+ * Renderer からの遷移はアプリ自身のページに限定し、外部 URL は安全な scheme のみ OS に委譲する。
+ * 外部ページを Electron の renderer として読み込むと preload API を渡すことになるため拒否する。
+ */
+function isAppRendererUrl(candidate: string): boolean {
+  try {
+    const url = new URL(candidate)
+    if (rendererUrl) {
+      const appUrl = new URL(rendererUrl)
+      return url.origin === appUrl.origin
+    }
+
+    const appUrl = new URL(pathToFileURL(resolve(__dirname, '../renderer/index.html')).href)
+    return url.protocol === 'file:' && url.pathname === appUrl.pathname
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 任意 scheme（file:, javascript:, custom protocol 等）を OS に渡さない。
+ */
+function openExternalUrl(candidate: string): void {
+  try {
+    const url = new URL(candidate)
+    if (url.protocol === 'https:' || url.protocol === 'http:' || url.protocol === 'mailto:') {
+      void shell.openExternal(url.href)
+    }
+  } catch {
+    // malformed URL は無視する。
+  }
+}
+
+/**
+ * 新規 window と既存 window の両方で、アプリ外ページが preload 付きで読み込まれるのを防ぐ。
+ */
+function applyNavigationPolicy(window: BrowserWindow): void {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAppRendererUrl(url)) return
+    event.preventDefault()
+    openExternalUrl(url)
+  })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (!isAppRendererUrl(url)) event.preventDefault()
+  })
+}
+
+/**
  * renderer のエントリを読み込む。
  * 開発中は Vite dev server、本番ビルドでは生成済み index.html を使う。
  *
@@ -108,14 +160,13 @@ function createMainWindow(): void {
     ...windowChromeOptions(process.platform),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
       sandbox: false,
     },
   })
 
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  applyNavigationPolicy(window)
 
   // 全画面では traffic lights が消えるため、renderer 側のタイトルバー左余白を畳めるよう状態を通知する。
   notifyFullScreenChanges(window)
@@ -183,9 +234,12 @@ function openPreviewWindow(request: unknown): Promise<void> {
       ...windowChromeOptions(process.platform),
       webPreferences: {
         preload: join(__dirname, '../preload/index.mjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
         sandbox: false,
       },
     })
+    applyNavigationPolicy(previewWindow)
     notifyFullScreenChanges(previewWindow)
     return {
       id: previewWindow.webContents.id,
@@ -291,6 +345,11 @@ app.whenReady().then(() => {
     if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Invalid local path.')
     const error = await shell.openPath(path)
     if (error) throw new Error(error)
+  })
+  // ローカルディレクトリを VS Code の URI ハンドラーへ渡す。シェル文字列として実行しない。
+  ipcMain.handle('local:open-in-vscode', async (_event, path: string) => {
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Invalid local path.')
+    await shell.openExternal(`vscode://file${pathToFileURL(path).pathname}`)
   })
   // ローカルエントリを Finder / Explorer / File Manager で表示する。
   ipcMain.handle('local:reveal', (_event, path: string) => {

@@ -183,6 +183,9 @@ export function requireEncryptionAvailable(): void {
 // 同期復号（provider 生成時に同期で secret を解決する）のための、ファイルパス単位キャッシュ。
 // テストごとに userData(temp) が変わっても、パス変化で自動的に読み直す。
 let cache: { path: string; map: Record<string, string> } | null = null
+// 接続先ごとの復号結果はアプリの main process 内だけで再利用する。
+// 暗号化値が変わった場合は writeEncryptedMap で無効化する。
+const decryptedCache = new Map<string, { encoded: string; secrets: ConnectionSecrets }>()
 
 /**
  * 暗号化済み secret マップを同期で読み出す（キャッシュあり）。
@@ -221,6 +224,9 @@ export async function writeEncryptedMap(map: Record<string, string>): Promise<vo
   await rename(temporary, destination)
   await chmod(destination, 0o600)
   cache = { path: destination, map }
+  for (const [id, entry] of decryptedCache) {
+    if (map[id] !== entry.encoded) decryptedCache.delete(id)
+  }
 }
 
 /**
@@ -238,6 +244,7 @@ export function encryptSecrets(secrets: ConnectionSecrets): string {
 /**
  * 保存済みの暗号化値を復号して secret を取り出す。
  * 復号後 JSON を検証し、形状が不正な場合は throw する（壊れた値を provider へ渡さない）。
+ * 同じ暗号化値は main process のメモリ内で再利用し、Keychain への反復アクセスを避ける。
  *
  * @param id 接続 id
  * @returns 復号した secret。未保存なら null
@@ -246,7 +253,12 @@ export function encryptSecrets(secrets: ConnectionSecrets): string {
 export function getStoredSecrets(id: string): ConnectionSecrets | null {
   const map = readEncryptedMap()
   const encoded = map[id]
-  if (encoded === undefined) return null
+  if (encoded === undefined) {
+    decryptedCache.delete(id)
+    return null
+  }
+  const cached = decryptedCache.get(id)
+  if (cached?.encoded === encoded) return cached.secrets
   requireEncryptionAvailable()
   const decrypted = safeStorage.decryptString(Buffer.from(encoded, 'base64'))
   const parsed: unknown = JSON.parse(decrypted)
@@ -255,5 +267,6 @@ export function getStoredSecrets(id: string): ConnectionSecrets | null {
       `Stored credential for connection "${id}" has an invalid or unrecognized format. Please re-enter and save the credentials.`
     )
   }
+  decryptedCache.set(id, { encoded, secrets: parsed })
   return parsed
 }

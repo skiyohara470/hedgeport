@@ -157,6 +157,105 @@ function breadcrumbs(path: string): Array<{ label: string; path: string }> {
 }
 
 /**
+ * パンくずの各階層にパス操作用コンテキストメニューを表示する。
+ */
+function Breadcrumbs({
+  path,
+  local = false,
+  absolutePathFor = (value) => value,
+  disabled = false,
+  onNavigate,
+}: {
+  path: string
+  local?: boolean
+  absolutePathFor?: (path: string) => string
+  disabled?: boolean
+  onNavigate: (path: string) => void
+}) {
+  const { t } = useTranslation()
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+
+  useEffect(() => {
+    if (!menu) return
+    const close = (): void => setMenu(null)
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menu])
+
+  const run = (action: 'absolute' | 'relative' | 'finder' | 'vscode'): void => {
+    if (!menu) return
+    const selectedPath = menu.path
+    setMenu(null)
+    if (action === 'absolute') copyToClipboard(absolutePathFor(selectedPath))
+    else if (action === 'relative') copyToClipboard(selectedPath.replace(/^\/+/, ''))
+    else if (action === 'finder') void window.hedgeport.openLocalPath(selectedPath).catch(console.error)
+    else void window.hedgeport.openLocalPathInVSCode(selectedPath).catch(console.error)
+  }
+
+  return (
+    <>
+      <nav className="breadcrumbs" aria-label={t('pane.currentDirectory')}>
+        {breadcrumbs(path).map((item, index, items) => (
+          <span key={item.path}>
+            <button
+              className="breadcrumb-button"
+              type="button"
+              disabled={disabled}
+              aria-current={item.path === path ? 'location' : undefined}
+              onClick={() => {
+                if (item.path !== path) onNavigate(item.path)
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setMenu({ x: event.clientX, y: event.clientY, path: item.path })
+              }}
+            >
+              {item.label}
+            </button>
+            {index > 0 && index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
+          </span>
+        ))}
+      </nav>
+      {menu && (
+        <div
+          className="context-menu"
+          role="menu"
+          aria-label={t('pane.currentDirectory')}
+          style={{ left: `${menu.x}px`, top: `${menu.y}px` }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button type="button" role="menuitem" onClick={() => run('absolute')}>
+            {t('action.copyAbsolutePath')}
+          </button>
+          <button type="button" role="menuitem" onClick={() => run('relative')}>
+            {t('action.copyRelativePath')}
+          </button>
+          {local && (
+            <>
+              <div className="context-menu-separator" />
+              <button type="button" role="menuitem" onClick={() => run('finder')}>
+                {t('action.openInFinder')}
+              </button>
+              <button type="button" role="menuitem" onClick={() => run('vscode')}>
+                {t('action.openInVSCode')}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
  * 左右ペインの幅を 20-80% の範囲へクランプして返す。
  */
 export function calculateSplitRatio(clientX: number, left: number, width: number): number {
@@ -951,21 +1050,18 @@ export const RemoteFilePane = forwardRef<
       <header className="pane-header">
         <span>{target.name}</span>
         <div className="pane-header-tools">
-          <nav className="breadcrumbs" aria-label={t('pane.currentDirectory')}>
-            {breadcrumbs(path).map((item, index, items) => (
-              <span key={item.path}>
-                <button
-                  className="breadcrumb-button"
-                  type="button"
-                  disabled={item.path === path || isLoading}
-                  onClick={() => void loadDirectory(item.path, 'push')}
-                >
-                  {item.label}
-                </button>
-                {index > 0 && index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
-              </span>
-            ))}
-          </nav>
+          <Breadcrumbs
+            path={path}
+            absolutePathFor={(value) => {
+              if (target.kind === 'sftp') {
+                return `${target.rootPath.replace(/\/+$/, '')}/${value.replace(/^\/+/, '')}` || '/'
+              }
+              const s3Path = value.replace(/^\/+/, '')
+              return s3Path ? `s3://${s3Path}` : '/'
+            }}
+            disabled={isLoading}
+            onNavigate={(nextPath) => void loadDirectory(nextPath, 'push')}
+          />
           <button
             className="pane-header-button"
             type="button"
@@ -1172,21 +1268,12 @@ const LocalFilePane = forwardRef<
       <header className="pane-header">
         <span>{t('pane.localFiles')}</span>
         <div className="pane-header-tools">
-          <nav className="breadcrumbs" aria-label={t('pane.currentDirectory')}>
-            {breadcrumbs(currentPath).map((item, index, items) => (
-              <span key={item.path}>
-                <button
-                  className="breadcrumb-button"
-                  type="button"
-                  disabled={item.path === currentPath || Boolean(error)}
-                  onClick={() => void loadDirectory(item.path, 'push')}
-                >
-                  {item.label}
-                </button>
-                {index > 0 && index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
-              </span>
-            ))}
-          </nav>
+          <Breadcrumbs
+            path={currentPath}
+            local
+            disabled={Boolean(error)}
+            onNavigate={(nextPath) => void loadDirectory(nextPath, 'push')}
+          />
           <button
             className="pane-header-button"
             type="button"

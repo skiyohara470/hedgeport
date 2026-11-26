@@ -1239,6 +1239,12 @@ tbody tr.selected-row td {
   text-align: left;
 }
 
+.context-menu-separator {
+  height: 1px;
+  margin: 4px;
+  background: var(--c-border);
+}
+
 .menu-shortcut {
   color: var(--c-text-subtle);
   font-size: 0.6875rem;

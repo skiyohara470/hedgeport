@@ -39,7 +39,7 @@ HedgePortは、SFTP・Amazon S3・ローカルファイルを一つの画面で�
 
 ## 開発環境で起動
 
-Node.jsとnpmが必要です。
+Node.js 22.12.0 以上と npm が必要です（npm は Node.js に同梱されています）。
 
 ```bash
 git clone https://github.com/skiyohara470/hedgeport.git

@@ -1,7 +1,7 @@
 ---
 type: storage
 title: 保存ファイルとデータ移行
-description: Electron userData に保存する HedgePort の永続ファイルと migration 方針。
+description: Electron の userData に保存する HedgePort の永続ファイルと移行方針。
 tags: [storage, migration, settings, credentials]
 status: active
 ---

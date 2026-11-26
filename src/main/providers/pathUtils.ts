@@ -9,6 +9,9 @@ export function normalizeVirtualPath(path: string): string {
   return normalized === '/.' ? '/' : normalized
 }
 
+/**
+ * 親の仮想パスと子要素名を POSIX 形式で結合し、絶対仮想パスへ正規化する。
+ */
 export function joinVirtualPath(parent: string, name: string): string {
   return normalizeVirtualPath(posix.join(parent, name))
 }
