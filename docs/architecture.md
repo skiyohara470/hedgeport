@@ -1,4 +1,12 @@
-# HedgePort Architecture
+---
+type: architecture
+title: HedgePort のアーキテクチャ
+description: HedgePort の main / preload / renderer / shared 境界と現在の実装構成。
+tags: [architecture, electron, ipc, storage-provider]
+status: active
+---
+
+# HedgePort のアーキテクチャ
 
 ## 目的
 
@@ -48,7 +56,7 @@ HedgePort は Electron アプリです。役割は大きく 4 層に分かれて
 - `storageMutations.ts`
   ディレクトリ作成 / リネーム（remote / local）。名前検証（空白のみ・`.`・`..`・`/`・`\`・NUL 拒否）、canonical パス構築、source 自身 / 配下 / ルートへの移動拒否、既存名衝突拒否をここで担保し、provider / fs へ委譲する。
 - `batchOperations.ts`
-  複数選択の一括処理（remote/local の delete、download、upload）。逐次処理し `BatchOperationResult {succeeded, failures[]}` を返す（all-or-nothing を偽装しない）。各項目で path / type を検証。local delete は lstat で symlink を追跡せず、directory は非再帰。
+  複数選択の一括処理（remote/local の delete、download、upload）。逐次処理し `BatchOperationResult {succeeded, failures[]}` を返す（all-or-nothing を偽装しない）。各項目で path / type を検証。remote download は directory を再帰取得し、選択ディレクトリ名を保ってローカルへ作成する。local delete は lstat で symlink を追跡せず、directory は非再帰。
 - `clipboard.ts`
   アプリ内クリップボードの貼り付け。remote↔local の 4 組合せ（download / upload / fs.copyFile / provider.copyFile・異接続は read→write）を main 内で処理。ディレクトリ copy は対象外。同名は `name copy.ext` 形式で衝突回避（`safeCopyName`）。
 - `dialogs.ts`
@@ -136,7 +144,7 @@ renderer から main への通信は、必ず preload を経由します。
 | `pickDirectory()`                                         | `ipcRenderer.invoke('dialog:pick-directory')`                            | `ipcMain.handle('dialog:pick-directory', ...)`         | 保存先ディレクトリ選択ダイアログ（親ウィンドウ付き、キャンセルは null）                                                              |
 | `batchDeleteRemote(target, items)`                        | `ipcRenderer.invoke('storage:batch-delete', ...)`                        | `ipcMain.handle('storage:batch-delete', ...)`          | リモート複数エントリ一括削除（file+directory）                                                                                       |
 | `batchDeleteLocal(items)`                                 | `ipcRenderer.invoke('local:batch-delete', items)`                        | `ipcMain.handle('local:batch-delete', ...)`            | ローカル複数エントリ一括削除（directory は非再帰）                                                                                   |
-| `batchDownload(target, remotePaths, localDirectory)`      | `ipcRenderer.invoke('storage:batch-download', ...)`                      | `ipcMain.handle('storage:batch-download', ...)`        | リモート複数ファイル一括ダウンロード                                                                                                 |
+| `batchDownload(target, items, localDirectory)`            | `ipcRenderer.invoke('storage:batch-download', ...)`                      | `ipcMain.handle('storage:batch-download', ...)`        | リモートの複数 file / directory を一括ダウンロード（directory は再帰取得）                                                            |
 | `batchUpload(target, localPaths, remoteDirectory)`        | `ipcRenderer.invoke('storage:batch-upload', ...)`                        | `ipcMain.handle('storage:batch-upload', ...)`          | ローカル複数ファイル一括アップロード                                                                                                 |
 | `paste(request)`                                          | `ipcRenderer.invoke('clipboard:paste', request)`                         | `ipcMain.handle('clipboard:paste', ...)`               | アプリ内クリップボードの貼り付け（remote/local 4 組合せ）                                                                            |
 | `openLocalPath(path)`                                     | `ipcRenderer.invoke('local:open-path', path)`                            | `ipcMain.handle('local:open-path', ...)`               | ローカルを OS 既定アプリで開く（openPath 非空エラーは例外化）                                                                        |
@@ -260,7 +268,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - ファイル権限は両ファイルとも `0600`。
 - 別ウィンドウのプレビュー画面は実ファイルを表示する（local/remote、既定は読み取り専用ビューア）。既定 Open または Open… > Preview が `openPreview(request)` を呼んで独立ウィンドウを開き、main は session（送信元ウィンドウ束縛）越しに `readRemoteTextWithRevision`/`readLocalTextWithRevision` を再利用して読む。認証情報・ローカル絶対パスは URL/hash/query に載せない。ウィンドウ内検索は Ctrl/Cmd+F。プレビューウィンドウ自身の「編集」ボタンでその場編集に切り替えられる（1 MiB 以下のみ。`savePreview` で local/SFTP/S3 へ保存、競合検知は main 側、Ctrl/Cmd+S 保存、未保存クローズは確認）。ファイラー内の Open… > Built-in Editor も従来どおり利用でき、保存後に一覧を再ロードする。プレビューウィンドウの diff は未実装。
 - 複数選択に対応。context menu / toolbar / ショートカットは現在の選択全体に作用する。右クリックは対象が選択内なら選択を維持、選択外ならその 1 件へ置換する。Rename / Open は単一選択時のみ有効。
-- 転送（download / upload）と copy はファイルのみ対象。ディレクトリの一括転送 / copy は対象外（rename / delete はディレクトリも対象）。delete の directory は SFTP / local が非再帰（非空はエラー）、S3 は prefix 配下を一括削除。
+- アップロードと copy はファイルのみ対象。リモートからの一括ダウンロードはファイル / ディレクトリに対応し、ディレクトリは選択名を保って再帰取得する。delete の directory は SFTP / local が非再帰（非空はエラー）、S3 は prefix 配下を一括削除。
 - アプリ内 Copy/Paste（Mod+C / Mod+V）は remote↔local の 4 組合せに対応。同名は上書きせず `name copy.ext` で採番。クリップボードは接続設定スナップショットを含み、タブ切替後も保持する。**大容量 / 大量ファイルは現 Provider が全量を一度に read/write する制約があり、メモリ使用に注意（ストリーミング / 進捗は将来対応）。**
 - S3 接続はアカウント単位。初期ページ（仮想ルート `/`）は region 内の bucket をディレクトリとして表示し、Open / ダブルクリックで `/<bucket>` へ入る。パンくずは `/ > bucket > …`、Up で bucket ルートから bucket 一覧へ戻る。bucket 一覧ルートでは bucket への mutation / 転送 / open-with（New Folder・Paste・Upload・Rename・Delete・Copy・Download・Copy path・編集/開く）を UI 上も無効化し、ディレクトリ（bucket）の Open/移動と検索・更新・ローカル側操作だけを許す（`fileActions` の `isBucketListRoot`）。bucket 内では通常の S3 アクションが有効に戻る。
 - マウス戻る/進む（Win/Linux の app-command、macOS のトラックパッド swipe）と DOM の補助マウスボタン（button 3/4）で、focus 中ペインのディレクトリ履歴を移動する。経路は main（OS イベント捕捉→preventDefault→`history:navigate` 送信、メインウィンドウのみ）→ preload（`onHistoryNavigation` で direction のみ購読・解除可）→ renderer。renderer 側では FilerWorkspace が、入力発生時点の宛先（pane / tabId）を固定したアイテムをキューへ積み、各ペインが公開する imperative handle（`PaneHandle.navigate`）経由で 1 件ずつ await しながら focus 中ペインへ適用する（drain 時に active tab でなければ破棄、対象ペイン未マウントなら no-op）。各ペインの `navigateBack`/`navigateForward` はヘッダボタンと外部要求で共有する。履歴・path・表示の更新は read 成功時にのみ確定し（commit-on-success）、失敗時は現在地・履歴・表示を保持して error だけを立てる（breadcrumb / entries / back-forward 可否が壊れず再操作可能）。履歴なし / loading 中 / 未接続 / aria-modal ダイアログ表示中 / 入力フォーカス中は no-op（error 中でも known-good な履歴へは戻れる）。IPC と DOM が同一入力を二重通知する場合は「同方向 × 別 source × 短時間」だけ dedupe し、reject した観測も記録する（直後の同 source 正規入力を落とさない）。同 source 連続は都度実行する。DOM 補助ボタンは Chromium 既定遷移を常に preventDefault し、`event.target` が入力要素ならナビゲーションせず抑止だけ行う。remote / local の履歴は独立、アクティブタブのみ対象。
@@ -277,7 +285,7 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
 - Built-in Editor モーダルは移動・リサイズ可能（名前入力モーダルは対象外）。ヘッダのタイトル領域（`.editor-drag-handle`）を pointer events + pointer capture でドラッグ移動し、ヘッダの操作系（encoding / BOM / Close）はドラッグ起点にならない。右下ハンドル（`.editor-resize-handle`）で両方向にリサイズ。位置・サイズの純粋ジオメトリは `defaultEditorSize` / `centeredEditorPosition` / `clampEditorRect` / `resizeEditorRect`（最小 `MIN_EDITOR_WIDTH` x `MIN_EDITOR_HEIGHT`）に切り出して単体テストする。`clampEditorRect` は位置を考慮してモーダル全体を viewport 内へ収め（サイズを viewport 上限へ収めた上で左上を `[0, viewport - size]` に制限）、ドラッグ・viewport リサイズ・初期配置で共通利用する。`resizeEditorRect` は左上を固定し最大サイズを現在位置で使える領域（`viewport - position`）に制限するため、右端・下端と操作系が常に到達可能。viewport が設定 min より小さい場合は実効最小を viewport 寸法まで縮退させ overflow させない。新規ファイルを開くたびに中央・sensible サイズへ reset する。ドラッグ / リサイズの window リスナーはエディタが途中で閉じても確実に解除する。textarea は flex で本体サイズに追従（`min-height` で可用性担保）。Preview はOSネイティブの独立ウィンドウとして移動・リサイズする。
 - remote の System Default / Choose Application は外部編集セッション（`externalEdit.ts`）で対応。temp へ download→外部アプリ起動し、画面下部のバナーに `Upload Changes` / `Reveal Local Copy` / `Discard` と状態（open / uploading / uploaded / error）を表示。自動 upload はせず、明示操作のみ。外部プロセス終了で破棄/アップロードはしない。同一ファイルの再オープンは既存セッションを再利用する。
 - 表示ラベル類（タブ / ヘッダー / パンくず / 一覧名 / メニュー）は `user-select: none`。input / textarea / editor は選択可能のまま。
-- ダウンロードは 2 系統。`Download to Local`（⌘/Ctrl+D）はローカルペインの現在ディレクトリへ即時保存し、ローカルペイン未表示時は無効化する。`Download file…`（⌘/Ctrl+Shift+D）は保存先をダイアログで選ぶ（キャンセルは no-op）。
+- ダウンロードは 2 系統。`Download to Local`（⌘/Ctrl+D）はローカルペイン表示中なら現在ディレクトリへ保存し、非表示なら保存先ダイアログを開く。`Download…`（⌘/Ctrl+Shift+D）は常に保存先ダイアログを開く（キャンセルは no-op）。コンテキストメニューでは保存先ダイアログ項目の重複表示を避ける。
 - ディレクトリ作成 / 改名は共通の入力モーダル（Enter 実行 / Escape 取消、rename は現名称を初期値）で行い、成功後は該当ペインのみ再ロードする。空白右クリックとエントリ右クリックの両方に New Folder… を出す。
 - キーボードショートカットはフォーカス中ペインの単一選択エントリにのみ作用し、入力中（input/textarea）は発火しない。OS に応じてメニューの修飾キー表記を ⌘ / Ctrl で出し分ける。
 - 左右ペインは独立。RemoteFilePane の初期化は `target.id` のみに依存し、ローカル移動に伴う接続設定保存（参照更新）でリモートをルートへ戻さない。
@@ -288,9 +296,10 @@ SFTP / S3 / ローカルの違いはここで吸収し、renderer は同じ形�
   - インポート時の重複除外: SFTP は `normalize(host を小文字化 / trim) + port + username(trim)` が一致すれば「同じサーバー・ユーザー」とみなして除外する（`rootPath` / `password` / `name` は重複判定に含めない）。
   - S3 は「同じサーバー・ユーザー」概念が無いため別ルールが必要。候補は `accessKeyId + region`（`secretAccessKey` / `sessionToken` / `name` は含めない）だが、実装時に仕様確定する。
 
-## 今後ドキュメントを足すなら
+## 関連ドキュメント
 
-- 接続情報保存仕様
-- IPC 契約一覧の詳細
-- ファイラー画面の状態遷移
-- 将来のアップロード / ダウンロード設計
+- [開発手順](development.md) - ローカル開発と変更時の基本ルール。
+- [テスト方針](testing.md) - テスト層と検証方針。
+- [セキュリティ](security.md) - secret / IPC / ファイルシステムの安全境界。
+- [保存データ](storage.md) - 永続ファイルとデータ移行の方針。
+- [設計判断](decisions/index.md) - 設計判断の記録。

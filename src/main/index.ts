@@ -276,8 +276,8 @@ app.whenReady().then(() => {
   ipcMain.handle('local:batch-delete', (_event, items: BatchItem[]) => batchDeleteLocal(items))
   ipcMain.handle(
     'storage:batch-download',
-    (_event, target: ConnectionTarget, remotePaths: string[], localDirectory: string) =>
-      batchDownloadToDirectory(target, remotePaths, localDirectory)
+    (_event, target: ConnectionTarget, items: BatchItem[], localDirectory: string) =>
+      batchDownloadToDirectory(target, items, localDirectory)
   )
   ipcMain.handle(
     'storage:batch-upload',

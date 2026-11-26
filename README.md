@@ -12,6 +12,7 @@ HedgePortは、SFTP・Amazon S3・ローカルファイルを一つの画面で�
   - バケットを選択してオブジェクトを操作
 - リモート／ローカルの2ペイン表示
 - アップロード、ダウンロード、削除、コピー
+- ディレクトリを含む再帰ダウンロード（選択フォルダ名を保ってローカルへ保存）
 - ファイル／ディレクトリのリネームとディレクトリ作成
 - 複数選択と一括操作
 - タブによる複数接続の切り替え
@@ -118,5 +119,6 @@ S3は接続設定でバケットを固定せず、接続後の最初の画面に
 - Vitest / Testing Library
 
 main、preload、renderer、sharedの責務とIPC構成は[docs/architecture.md](docs/architecture.md)を参照してください。
+開発・テスト・セキュリティ・保存形式に関する補足は[docs/index.md](docs/index.md)にまとめています。
 
 今後の実装予定は[PLAN.md](PLAN.md)にまとめています。

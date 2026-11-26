@@ -196,7 +196,7 @@ describe('RemoteFilePane', () => {
 
     expect(await screen.findByRole('menu', { name: 'report.csv actions' })).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: /Download to Local/ })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: /Download file…/ })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Download…/ })).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: /Copy path/ })).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: /Delete/ })).toBeTruthy()
   })
@@ -482,7 +482,11 @@ describe('FilerWorkspace ファイル操作', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /Download to Local/ }))
 
     await waitFor(() =>
-      expect(batchDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), ['/a.txt'], '/work')
+      expect(batchDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sftp-1' }),
+        [{ path: '/a.txt', type: 'file' }],
+        '/work'
+      )
     )
     expect(await screen.findByText('Downloaded 1')).toBeTruthy()
   })
@@ -494,10 +498,14 @@ describe('FilerWorkspace ファイル操作', () => {
 
     const remoteRow = screen.getByText('a.txt').closest('tr')!
     fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Download file…/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Download…/ }))
 
     await waitFor(() =>
-      expect(batchDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), ['/a.txt'], '/chosen/dir')
+      expect(batchDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sftp-1' }),
+        [{ path: '/a.txt', type: 'file' }],
+        '/chosen/dir'
+      )
     )
 
     // キャンセル時は何もしない。
@@ -506,20 +514,22 @@ describe('FilerWorkspace ファイル操作', () => {
     await renderWorkspace({ batchDownload: cancelled, pickDirectory: cancelPick })
     const row2 = screen.getAllByText('a.txt')[0].closest('tr')!
     fireEvent.contextMenu(row2, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Download file…/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Download…/ }))
     await waitFor(() => expect(cancelPick).toHaveBeenCalled())
     expect(cancelled).not.toHaveBeenCalled()
   })
 
-  it('ローカルペイン非表示時は Download to Local を無効化する', async () => {
-    const downloadToDirectory = vi.fn().mockResolvedValue(undefined)
+  it('ローカルペイン非表示時は Download… から保存先を選べる', async () => {
+    const batchDownload = vi.fn().mockResolvedValue({ succeeded: 1, failures: [] })
+    const pickDirectory = vi.fn().mockResolvedValue('/chosen/dir')
     // renderWorkspace はローカルペインを開くので、ここでは開かずに直接描画する。
     Object.defineProperty(window, 'hedgeport', {
       configurable: true,
       value: {
         listStorage: vi.fn().mockResolvedValue([{ name: 'a.txt', path: '/a.txt', type: 'file', size: 3 }]),
         listLocal: vi.fn().mockResolvedValue({ path: '/work', parentPath: '/', entries: [] }),
-        downloadToDirectory,
+        batchDownload,
+        pickDirectory,
       },
     })
     render(
@@ -535,12 +545,18 @@ describe('FilerWorkspace ファイル操作', () => {
     const remoteRow = (await screen.findByText('a.txt')).closest('tr')!
     fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
 
-    // 転送先を視認できないため Download to Local は無効。Download file… は使える。
-    const toLocal = (await screen.findByRole('menuitem', { name: /Download to Local/ })) as HTMLButtonElement
-    expect(toLocal.disabled).toBe(true)
-    expect((screen.getByRole('menuitem', { name: /Download file…/ }) as HTMLButtonElement).disabled).toBe(false)
-    fireEvent.click(toLocal)
-    expect(downloadToDirectory).not.toHaveBeenCalled()
+    const download = (await screen.findByRole('menuitem', { name: /Download…/ })) as HTMLButtonElement
+    expect(download.disabled).toBe(false)
+    expect(screen.queryByRole('menuitem', { name: /Download to Local/ })).toBeNull()
+    fireEvent.click(download)
+    await waitFor(() => {
+      expect(pickDirectory).toHaveBeenCalled()
+      expect(batchDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sftp-1' }),
+        [{ path: '/a.txt', type: 'file' }],
+        '/chosen/dir'
+      )
+    })
   })
 
   it('ローカルファイルをリモートの現在ディレクトリへ一括アップロードする', async () => {
@@ -652,7 +668,11 @@ describe('FilerWorkspace ファイル操作', () => {
     fireEvent.keyDown(window, { key: 'd', ctrlKey: true })
 
     await waitFor(() =>
-      expect(batchDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), ['/a.txt'], '/work')
+      expect(batchDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sftp-1' }),
+        [{ path: '/a.txt', type: 'file' }],
+        '/work'
+      )
     )
   })
 
@@ -1001,7 +1021,7 @@ describe('FilerWorkspace ファイル操作', () => {
     expect(await screen.findByLabelText('Folder name')).toBeTruthy()
   })
 
-  it('Download file… のダイアログ待機中にタブを切り替えたら反映しない', async () => {
+  it('Download… のダイアログ待機中にタブを切り替えたら反映しない', async () => {
     const batchDownload = vi.fn().mockResolvedValue({ succeeded: 1, failures: [] })
     let resolvePick: (value: string | null) => void = () => undefined
     const pickDirectory = vi.fn().mockImplementation(
@@ -1014,7 +1034,7 @@ describe('FilerWorkspace ファイル操作', () => {
 
     const remoteRow = screen.getByText('a.txt').closest('tr')!
     fireEvent.contextMenu(remoteRow, { clientX: 10, clientY: 10 })
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Download file…/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Download…/ }))
     await waitFor(() => expect(pickDirectory).toHaveBeenCalled())
 
     // ダイアログ待機中に新規タブ（接続先 null）へ切り替える。
@@ -1146,7 +1166,11 @@ describe('FilerWorkspace ファイル操作', () => {
     fireEvent.click(downloadButton())
 
     await waitFor(() =>
-      expect(batchDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 'sftp-1' }), ['/a.txt'], '/work')
+      expect(batchDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'sftp-1' }),
+        [{ path: '/a.txt', type: 'file' }],
+        '/work'
+      )
     )
   })
 

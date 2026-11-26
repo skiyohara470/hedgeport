@@ -562,7 +562,10 @@ function FileTable({
     .map((id) => actions.find((action) => action.id === id))
     .filter((action): action is FileActionDescriptor => Boolean(action))
   const menuActions = contextMenu?.entry
-    ? actions.filter((action) => action.id !== 'open-folder')
+    ? actions.filter(
+        (action) =>
+          action.id !== 'open-folder' && !(action.id === 'download-dialog' && !canDownloadToLocal)
+      )
     : actions.filter((action) => action.id === 'new-folder' || action.id === 'paste' || action.id === 'open-folder')
 
   return (
@@ -959,7 +962,7 @@ export const RemoteFilePane = forwardRef<
                 >
                   {item.label}
                 </button>
-                {index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
+                {index > 0 && index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
               </span>
             ))}
           </nav>
@@ -1180,7 +1183,7 @@ const LocalFilePane = forwardRef<
                 >
                   {item.label}
                 </button>
-                {index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
+                {index > 0 && index < items.length - 1 && <span className="breadcrumb-separator">/</span>}
               </span>
             ))}
           </nav>
@@ -1582,7 +1585,9 @@ export function FilerWorkspace({
     try {
       const result = await action()
       if (!isCurrentScope(scope)) return
-      if (result.succeeded > 0) onSuccessReload?.()
+      // directory download may leave completed children before one child fails; refresh local pane
+      // on partial failures too so the visible contents reflect files already written.
+      if (result.succeeded > 0 || result.failures.length > 0) onSuccessReload?.()
       if (result.failures.length === 0) {
         setTransfer({ busy: false, status: { key: doneKey, params: { count: result.succeeded } }, error: null })
       } else {
@@ -1612,7 +1617,7 @@ export function FilerWorkspace({
   }
 
   /**
-   * 選択リモートファイル群をローカルの現在ディレクトリへ一括ダウンロードする。
+   * 選択リモート項目（ファイル / ディレクトリ）をローカルの現在ディレクトリへ一括ダウンロードする。
    */
   const handleDownloadToLocal = (selection: StorageEntry[]): void => {
     if (!activeTarget || selection.length === 0) return
@@ -1622,32 +1627,32 @@ export function FilerWorkspace({
     }
     const target = activeTarget
     const directory = localDir
-    const paths = selection.map((entry) => entry.path)
+    const items = selection.map(({ path, type }) => ({ path, type }))
     void runBatch(
       'status.downloading',
       'status.downloaded',
-      paths.length,
-      () => window.hedgeport.batchDownload(target, paths, directory),
+      items.length,
+      () => window.hedgeport.batchDownload(target, items, directory),
       () => setLocalReloadToken((value) => value + 1)
     )
   }
 
   /**
-   * 保存先ディレクトリをダイアログで選び、選択ファイル群を一括ダウンロードする（キャンセルは no-op）。
+   * 保存先ディレクトリをダイアログで選び、選択項目を一括ダウンロードする（キャンセルは no-op）。
    */
   const handleDownloadToChosenDirectory = (selection: StorageEntry[]): void => {
     if (!activeTarget || selection.length === 0) return
     const target = activeTarget
     const scope = captureScope()
-    const paths = selection.map((entry) => entry.path)
+    const items = selection.map(({ path, type }) => ({ path, type }))
     void (async () => {
       const directory = await window.hedgeport.pickDirectory()
       if (!directory || !isCurrentScope(scope)) return
       await runBatch(
         'status.downloading',
         'status.downloaded',
-        paths.length,
-        () => window.hedgeport.batchDownload(target, paths, directory),
+        items.length,
+        () => window.hedgeport.batchDownload(target, items, directory),
         () => {
           if (showLocalFiles && directory === localDir) setLocalReloadToken((value) => value + 1)
         },
@@ -2198,7 +2203,8 @@ export function FilerWorkspace({
         if (selection[0]?.type === 'file') openPreview('remote', selection[0])
         break
       case 'download-local':
-        handleDownloadToLocal(selection)
+        if (showLocalFiles && localDir) handleDownloadToLocal(selection)
+        else handleDownloadToChosenDirectory(selection)
         break
       case 'download-dialog':
         handleDownloadToChosenDirectory(selection)

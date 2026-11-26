@@ -62,7 +62,7 @@ describe('preload api', () => {
     api.saveSettings({ version: 1, theme: 'dark' })
     api.batchDeleteRemote(target, [{ path: '/a.txt', type: 'file' }])
     api.batchDeleteLocal([{ path: '/local/a.txt', type: 'file' }])
-    api.batchDownload(target, ['/a.txt'], '/local/dir')
+    api.batchDownload(target, [{ path: '/a.txt', type: 'file' }], '/local/dir')
     api.batchUpload(target, ['/local/a.txt'], '/remote')
     api.paste({
       entries: [{ path: '/a.txt', name: 'a.txt', type: 'file' }],

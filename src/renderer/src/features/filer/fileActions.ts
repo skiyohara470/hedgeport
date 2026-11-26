@@ -258,9 +258,9 @@ function isEnabled(id: FileActionId, context: ActionContext): boolean {
       // 開き方選択は単一ファイルのみ（ディレクトリは Open で移動）。
       return count === 1 && context.selection[0]?.type === 'file'
     case 'download-local':
-      return context.paneKind === 'remote' && files && context.canDownloadToLocal && !context.busy
+      return context.paneKind === 'remote' && count > 0 && !context.busy
     case 'download-dialog':
-      return context.paneKind === 'remote' && files && !context.busy
+      return context.paneKind === 'remote' && count > 0 && !context.busy
     case 'upload':
       return context.paneKind === 'local' && files && !context.busy
     case 'copy':
@@ -299,7 +299,10 @@ export function describeActions(context: ActionContext): FileActionDescriptor[] 
     const shortcut = SHORTCUTS[id]
     return {
       id,
-      label: actionLabel(id, count, t),
+      label:
+        id === 'download-local' && !context.canDownloadToLocal
+          ? actionLabel('download-dialog', count, t)
+          : actionLabel(id, count, t),
       shortcut,
       shortcutLabel: shortcut ? shortcutLabel(shortcut) : undefined,
       enabled: isEnabled(id, context),

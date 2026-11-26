@@ -92,20 +92,21 @@ describe('describeActions', () => {
     expect(find(context, 'rename').enabled).toBe(false)
     expect(find(context, 'open').enabled).toBe(false)
     expect(find(context, 'delete').label).toBe('Delete 3 items')
-    expect(find(context, 'download-local').label).toBe('Download 3 files to Local')
+    expect(find(context, 'download-local').label).toBe('Download 3 items to Local')
   })
 
-  it('ディレクトリを含むと download/copy は無効（delete は有効）', () => {
+  it('ディレクトリを含む選択でも download は有効、copy は無効（delete は有効）', () => {
     const context = baseContext({ selection: [file('a.txt'), dir('sub')] })
-    expect(find(context, 'download-local').enabled).toBe(false)
-    expect(find(context, 'download-dialog').enabled).toBe(false)
+    expect(find(context, 'download-local').enabled).toBe(true)
+    expect(find(context, 'download-dialog').enabled).toBe(true)
     expect(find(context, 'copy').enabled).toBe(false)
     expect(find(context, 'delete').enabled).toBe(true)
   })
 
-  it('ローカルペイン非表示なら download-local は無効、download-dialog は有効', () => {
+  it('ローカルペイン非表示なら download-local が保存先選択として有効', () => {
     const context = baseContext({ canDownloadToLocal: false })
-    expect(find(context, 'download-local').enabled).toBe(false)
+    expect(find(context, 'download-local').enabled).toBe(true)
+    expect(find(context, 'download-local').label).toBe('Download…')
     expect(find(context, 'download-dialog').enabled).toBe(true)
   })
 
