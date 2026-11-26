@@ -30,6 +30,8 @@ SFTP password、S3 `accessKeyId` / `secretAccessKey` / `sessionToken` は secret
 
 `safeStorage.isEncryptionAvailable()` が false の場合、secret 保存・復号・migration は失敗させます。平文 fallback と master password は現スコープ外です。
 
+復号した secret は接続利用のため main process のメモリ内にキャッシュし、アプリ終了時に破棄します。暗号化値が更新された場合はキャッシュを無効化します。macOS では Keychain へのアクセス許可を求められることがあります。
+
 ## IPC 通信
 
 preload は narrow API bridge です。renderer に `ipcRenderer` を渡しません。
