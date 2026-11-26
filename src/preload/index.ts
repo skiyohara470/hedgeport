@@ -109,6 +109,7 @@ const api = {
   ): Promise<BatchOperationResult> => ipcRenderer.invoke('storage:batch-upload', target, localPaths, remoteDirectory),
   paste: (request: PasteRequest): Promise<BatchOperationResult> => ipcRenderer.invoke('clipboard:paste', request),
   openLocalPath: (path: string): Promise<void> => ipcRenderer.invoke('local:open-path', path),
+  openLocalPathInVSCode: (path: string): Promise<void> => ipcRenderer.invoke('local:open-in-vscode', path),
   revealInFolder: (path: string): Promise<void> => ipcRenderer.invoke('local:reveal', path),
   readLocalText: (path: string, encoding?: ReadEncoding): Promise<TextDocument> =>
     ipcRenderer.invoke('local:read-text', path, encoding),

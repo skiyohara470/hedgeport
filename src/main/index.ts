@@ -346,6 +346,11 @@ app.whenReady().then(() => {
     const error = await shell.openPath(path)
     if (error) throw new Error(error)
   })
+  // ローカルディレクトリを VS Code の URI ハンドラーへ渡す。シェル文字列として実行しない。
+  ipcMain.handle('local:open-in-vscode', async (_event, path: string) => {
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Invalid local path.')
+    await shell.openExternal(`vscode://file${pathToFileURL(path).pathname}`)
+  })
   // ローカルエントリを Finder / Explorer / File Manager で表示する。
   ipcMain.handle('local:reveal', (_event, path: string) => {
     if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Invalid local path.')

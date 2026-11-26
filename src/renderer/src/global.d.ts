@@ -76,6 +76,7 @@ declare global {
     ) => Promise<BatchOperationResult>
     paste: (request: PasteRequest) => Promise<BatchOperationResult>
     openLocalPath: (path: string) => Promise<void>
+    openLocalPathInVSCode: (path: string) => Promise<void>
     revealInFolder: (path: string) => Promise<void>
     readLocalText: (path: string, encoding?: ReadEncoding) => Promise<TextDocument>
     writeLocalText: (path: string, text: string, encoding?: TextEncoding, bom?: boolean) => Promise<void>
