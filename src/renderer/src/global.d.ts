@@ -66,7 +66,7 @@ declare global {
     batchDeleteLocal: (items: BatchItem[]) => Promise<BatchOperationResult>
     batchDownload: (
       target: ConnectionTarget,
-      remotePaths: string[],
+      items: BatchItem[],
       localDirectory: string
     ) => Promise<BatchOperationResult>
     batchUpload: (

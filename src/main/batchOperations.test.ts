@@ -124,11 +124,19 @@ describe('batchDownloadToDirectory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     providerMock.mockReturnValue({ read: readMock })
+    lstatMock.mockRejectedValue(Object.assign(new Error('not found'), { code: 'ENOENT' }))
   })
 
   it('各ファイルを dir + basename へ書き出す', async () => {
     readMock.mockResolvedValue(new Uint8Array([1]))
-    const result = await batchDownloadToDirectory(target, ['/reports/a.csv', '/b.csv'], '/Users/me/dl')
+    const result = await batchDownloadToDirectory(
+      target,
+      [
+        { path: '/reports/a.csv', type: 'file' },
+        { path: '/b.csv', type: 'file' },
+      ],
+      '/Users/me/dl'
+    )
 
     expect(writeFileMock).toHaveBeenCalledWith('/Users/me/dl/a.csv', new Uint8Array([1]))
     expect(writeFileMock).toHaveBeenCalledWith('/Users/me/dl/b.csv', new Uint8Array([1]))

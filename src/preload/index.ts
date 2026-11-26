@@ -99,9 +99,9 @@ const api = {
     ipcRenderer.invoke('local:batch-delete', items),
   batchDownload: (
     target: ConnectionTarget,
-    remotePaths: string[],
+    items: BatchItem[],
     localDirectory: string
-  ): Promise<BatchOperationResult> => ipcRenderer.invoke('storage:batch-download', target, remotePaths, localDirectory),
+  ): Promise<BatchOperationResult> => ipcRenderer.invoke('storage:batch-download', target, items, localDirectory),
   batchUpload: (
     target: ConnectionTarget,
     localPaths: string[],

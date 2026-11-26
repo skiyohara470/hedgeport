@@ -1,5 +1,5 @@
 import { basename, isAbsolute, join } from 'node:path'
-import { lstat, readFile, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rmdir, unlink, writeFile } from 'node:fs/promises'
 
 import type { ConnectionTarget } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
@@ -58,6 +58,10 @@ async function runBatch(items: unknown[], run: (item: unknown) => Promise<void>)
 
 /**
  * リモートのバッチ項目を検証する（object / canonical path / file|directory）。
+ *
+ * @param raw IPC から届いた未検証の値
+ * @returns 検証済みの remote path と entry 種別
+ * @throws shape、path、entry 種別が不正な場合
  */
 function assertRemoteBatchItem(raw: unknown): { path: string; type: StorageEntryType } {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid item.')
@@ -69,6 +73,10 @@ function assertRemoteBatchItem(raw: unknown): { path: string; type: StorageEntry
 
 /**
  * ローカルのバッチ項目を検証する（object / absolute path / file|directory）。
+ *
+ * @param raw IPC から届いた未検証の値
+ * @returns 検証済みの local path と entry 種別
+ * @throws shape、path、entry 種別が不正な場合
  */
 function assertLocalBatchItem(raw: unknown): { path: string; type: StorageEntryType } {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid item.')
@@ -83,6 +91,7 @@ function assertLocalBatchItem(raw: unknown): { path: string; type: StorageEntryT
  *
  * @param target 接続先設定（未検証値）
  * @param items 削除対象 [{ path, type }]
+ * @returns 成功件数と失敗した項目
  */
 export async function batchDeleteRemote(target: unknown, items: unknown): Promise<BatchOperationResult> {
   const connection = ensureConnectionTarget(target)
@@ -100,6 +109,7 @@ export async function batchDeleteRemote(target: unknown, items: unknown): Promis
  * symlink は追跡せず entry として削除（unlink）。directory は非再帰（空のみ、非空はエラー）。
  *
  * @param items 削除対象 [{ path, type }]
+ * @returns 成功件数と失敗した項目
  */
 export async function batchDeleteLocal(items: unknown): Promise<BatchOperationResult> {
   if (!Array.isArray(items)) throw new Error('Invalid items.')
@@ -121,26 +131,137 @@ export async function batchDeleteLocal(items: unknown): Promise<BatchOperationRe
 }
 
 /**
- * リモートの複数ファイルを、指定ローカルディレクトリ直下へダウンロードする（ファイルのみ）。
+ * リモートの複数エントリを、指定ローカルディレクトリへダウンロードする。
+ * ディレクトリは同名のローカルディレクトリへ再帰的に取得し、既存フォルダへはマージする。
  *
  * @param target 接続先設定（未検証値）
- * @param remotePaths ダウンロード元のリモート仮想パス配列
+ * @param items ダウンロード対象 [{ path, type }]
  * @param localDirectory 保存先のローカルディレクトリ（絶対パス）
+ * @returns 成功件数と失敗した項目。directory は子の一部が保存済みでも失敗として記録される
  */
 export async function batchDownloadToDirectory(
   target: unknown,
-  remotePaths: unknown,
+  items: unknown,
   localDirectory: unknown
 ): Promise<BatchOperationResult> {
   const connection = ensureConnectionTarget(target)
-  if (!Array.isArray(remotePaths)) throw new Error('Invalid items.')
+  if (!Array.isArray(items)) throw new Error('Invalid items.')
   if (typeof localDirectory !== 'string' || !isAbsolute(localDirectory)) throw new Error('Invalid local file path.')
   const provider = createStorageProvider(connection)
-  return runBatch(remotePaths, async (raw) => {
-    if (typeof raw !== 'string' || !isCanonicalVirtualEntryPath(raw)) throw new Error('Invalid remote path.')
-    const data = await provider.read(raw)
-    await writeFile(join(localDirectory, basenameVirtual(raw)), data)
+  return runBatch(items, async (raw) => {
+    const item = assertRemoteBatchItem(raw)
+    await downloadRemoteEntry(provider, item.path, item.type, join(localDirectory, basenameVirtual(item.path)))
   })
+}
+
+/**
+ * リモート一覧の子要素名がローカルの1パス要素として安全か検証する。
+ *
+ * 作成・改名時の assertEntryName と異なり、既存リモート名の空白だけのケースは許容する。
+ *
+ * @param name リモートプロバイダーが返した名前
+ * @throws 空名、dot segment、区切り文字、NUL を含む場合
+ */
+function assertSafeRemoteName(name: unknown): asserts name is string {
+  if (
+    typeof name !== 'string' ||
+    name.length === 0 ||
+    name === '.' ||
+    name === '..' ||
+    /[\\/\0]/.test(name)
+  ) {
+    throw new Error('Remote entry has an unsafe name.')
+  }
+}
+
+/**
+ * ファイルのダウンロード先が regular file か検証し、symlink への書き込みを拒否する。
+ *
+ * @param path 検証するローカルパス
+ * @throws symlink、regular file 以外の既存 entry、または stat エラーの場合
+ */
+async function assertDownloadFileDestination(path: string): Promise<void> {
+  try {
+    const stats = await lstat(path)
+    if (stats.isSymbolicLink()) throw new Error('Refusing to write through a symbolic link.')
+    if (!stats.isFile()) {
+      throw new Error('A different item already exists at the download destination.')
+    }
+  } catch (reason) {
+    if (reason && typeof reason === 'object' && 'code' in reason && reason.code === 'ENOENT') return
+    throw reason
+  }
+}
+
+/**
+ * 保存先ルート配下のディレクトリを symlink をたどらずに確認し、無ければ1階層だけ作る。
+ *
+ * 呼び出し側は親 directory を先に検証済みであること。recursive mkdir は使わず、
+ * 既存の子 directory が symlink の場合にそのリンク先へ書き込まない。
+ *
+ * @param path 検証または作成する directory path
+ * @throws symlink、directory 以外の既存 entry、親の不存在、または filesystem error の場合
+ */
+async function ensureDownloadDirectory(path: string): Promise<void> {
+  try {
+    const stats = await lstat(path)
+    if (stats.isSymbolicLink()) throw new Error('Refusing to write through a symbolic link.')
+    if (!stats.isDirectory()) throw new Error('A different item already exists at the download destination.')
+  } catch (reason) {
+    if (reason && typeof reason === 'object' && 'code' in reason && reason.code === 'ENOENT') {
+      // 親は再帰呼び出し元で検証済み。recursive mkdir で未検証の子孫をたどらない。
+      await mkdir(path)
+      return
+    }
+    throw reason
+  }
+}
+
+/**
+ * リモートの1エントリをローカルへ保存する。directory は子要素を逐次処理する。
+ *
+ * @param provider ダウンロード元 provider
+ * @param remotePath canonical なリモート仮想パス
+ * @param type 対象の entry 種別
+ * @param localPath 保存先パス
+ * @throws provider / filesystem 操作、または子エントリ検証に失敗した場合
+ */
+async function downloadRemoteEntry(
+  provider: ReturnType<typeof createStorageProvider>,
+  remotePath: string,
+  type: StorageEntryType,
+  localPath: string
+): Promise<void> {
+  if (type === 'file') {
+    await assertDownloadFileDestination(localPath)
+    const data = await provider.read(remotePath)
+    await writeFile(localPath, data)
+    return
+  }
+
+  await ensureDownloadDirectory(localPath)
+  const children = await provider.list(remotePath)
+  const failures: Array<{ path: string; message: string }> = []
+  for (const child of children) {
+    try {
+      assertSafeRemoteName(child.name)
+      if (child.type !== 'file' && child.type !== 'directory') throw new Error('Invalid remote entry type.')
+      const expectedPath = joinVirtualPath(remotePath, child.name)
+      if (child.path !== expectedPath || !isCanonicalVirtualEntryPath(child.path)) {
+        throw new Error('Remote entry has an invalid path.')
+      }
+      await downloadRemoteEntry(provider, child.path, child.type, join(localPath, child.name))
+    } catch (reason) {
+      failures.push({
+        path: typeof child.path === 'string' ? child.path : remotePath,
+        message: reason instanceof Error ? reason.message : 'Operation failed.',
+      })
+    }
+  }
+  if (failures.length > 0) {
+    const first = failures[0]
+    throw new Error(`Failed to download ${failures.length} item(s). ${first.path}: ${first.message}`)
+  }
 }
 
 /**
@@ -149,6 +270,7 @@ export async function batchDownloadToDirectory(
  * @param target 接続先設定（未検証値）
  * @param localPaths アップロード元のローカル絶対パス配列
  * @param remoteDirectory 書き込み先のリモート仮想ディレクトリ
+ * @returns 成功件数と失敗した項目
  */
 export async function batchUpload(
   target: unknown,
