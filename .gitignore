@@ -1,5 +1,6 @@
 node_modules/
 dist/
 out/
+release/
 *.log
 .codex/hooks.json

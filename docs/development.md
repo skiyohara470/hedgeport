@@ -16,7 +16,7 @@ HedgePort は Electron + React + TypeScript のデスクトップアプリです
 - 依存関係は `npm ci` で入れます。
 - 開発起動は `npm run dev` です。
 
-## コマンド
+## 開発コマンド
 
 ```bash
 npm run dev
@@ -26,7 +26,23 @@ npm run build
 npm run preview
 ```
 
-`npm run build` は型チェックのあとに Electron 向けのバンドルを `out/` へ生成します。配布用インストーラーはまだ作りません。
+`npm run build` は型チェックのあとに Electron 向けのバンドルを `out/` へ生成します。
+
+## macOSアプリを作成
+
+Node.js 22.12.0 以上を使い、リポジトリのルートディレクトリで依存関係をインストールしてから実行します。Apple Silicon（M1以降）向けのローカルアプリを作成します。
+
+```bash
+npm ci
+npm run package:mac
+open release/mac-arm64
+```
+
+`open` コマンドでFinderに生成先を表示します。アプリは `release/mac-arm64/hedgeport.app` に生成されるので、「アプリケーション」フォルダへ移動して起動できます。ソースコードから取得した未署名アプリのため、初回起動時にmacOSの確認が表示されることがあります。FinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。
+
+配布用ディスクイメージ（`.dmg`）は `npm run dist:mac` で生成できます。署名と公証は別途設定が必要です。
+
+`npm run build` の出力は `out/`、アプリとディスクイメージの出力は `release/` です。
 
 ## 実装時のルール
 

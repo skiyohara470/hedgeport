@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#203634"/>
+      <stop offset="1" stop-color="#10191b"/>
+    </linearGradient>
+    <linearGradient id="spines" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a8d2bd"/>
+      <stop offset="1" stop-color="#5c9b8b"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#fff1d5"/>
+      <stop offset="1" stop-color="#e9bd83"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#071011" flood-opacity=".35"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#background)"/>
+  <circle cx="512" cy="512" r="386" fill="none" stroke="#ffffff" stroke-opacity=".055" stroke-width="3"/>
+
+  <g filter="url(#shadow)">
+    <!-- Rounded, forward-facing spines form the hedgehog's back. -->
+    <path d="M204 624
+      C175 576 193 533 243 523
+      C210 475 229 432 286 430
+      C266 377 296 343 350 357
+      C347 300 386 276 435 306
+      C452 250 498 241 536 282
+      C567 229 616 232 644 278
+      C687 244 729 264 741 313
+      C790 294 825 324 818 374
+      C866 381 887 420 860 460
+      C903 483 909 525 871 555
+      C886 592 863 623 824 631
+      C772 722 679 775 544 777
+      L339 766 C272 751 225 702 204 624Z"
+      fill="url(#spines)"/>
+
+    <!-- Soft spine grooves give the silhouette a clear, friendly quill pattern. -->
+    <path d="M282 499 C324 503 352 527 366 567" fill="none" stroke="#d4e8d8" stroke-opacity=".54" stroke-width="13" stroke-linecap="round"/>
+    <path d="M359 410 C401 425 423 457 426 495" fill="none" stroke="#d4e8d8" stroke-opacity=".54" stroke-width="13" stroke-linecap="round"/>
+    <path d="M465 336 C502 360 518 394 510 432" fill="none" stroke="#d4e8d8" stroke-opacity=".54" stroke-width="13" stroke-linecap="round"/>
+    <path d="M586 319 C612 348 617 384 601 417" fill="none" stroke="#d4e8d8" stroke-opacity=".54" stroke-width="13" stroke-linecap="round"/>
+    <path d="M710 360 C722 394 713 429 687 452" fill="none" stroke="#d4e8d8" stroke-opacity=".54" stroke-width="13" stroke-linecap="round"/>
+    <path d="M807 437 C801 471 777 495 743 504" fill="none" stroke="#d4e8d8" stroke-opacity=".54" stroke-width="13" stroke-linecap="round"/>
+
+    <!-- Belly and little feet. -->
+    <path d="M313 682 C367 622 459 600 570 614 C663 626 722 678 729 727
+      C679 767 610 787 525 783 C433 779 359 747 313 682Z" fill="#d9aa78"/>
+    <ellipse cx="414" cy="759" rx="44" ry="22" fill="#e8bd89"/>
+    <ellipse cx="650" cy="758" rx="44" ry="22" fill="#e8bd89"/>
+
+    <!-- Face, looking toward the destination on the right. -->
+    <path d="M583 474
+      C660 434 761 438 819 482
+      C850 506 861 535 838 553
+      C820 567 790 558 768 576
+      C744 596 727 625 691 629
+      C655 635 619 612 590 588
+      C560 562 549 504 583 474Z"
+      fill="url(#face)"/>
+    <path d="M803 486 C842 489 868 509 872 530 C876 549 853 562 824 555
+      C803 550 789 532 790 514 C791 500 796 491 803 486Z" fill="#273435"/>
+    <circle cx="736" cy="503" r="13" fill="#172223"/>
+    <circle cx="740" cy="499" r="4" fill="#fff8e8"/>
+    <path d="M694 561 C708 574 727 580 744 577" fill="none" stroke="#bb805d" stroke-width="8" stroke-linecap="round"/>
+
+    <!-- A small two-way transfer mark on the flank. -->
+    <g transform="translate(451 675)" fill="none" stroke="#203b39" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M-42 -13 H46 M26 -34 L48 -13 26 8"/>
+      <path d="M42 27 H-46 M-26 6 L-48 27 -26 48"/>
+    </g>
+  </g>
+</svg>
