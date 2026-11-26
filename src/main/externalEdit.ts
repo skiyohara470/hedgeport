@@ -132,8 +132,9 @@ async function launch(
  * セッションの temp ディレクトリを削除する（best-effort。失敗は致命にせずログのみ）。
  */
 async function cleanup(session: { tempDir: string }): Promise<void> {
-  await rm(session.tempDir, { recursive: true, force: true }).catch((error) => {
-    console.error(`Failed to clean up external edit temp dir ${session.tempDir}:`, error)
+  await rm(session.tempDir, { recursive: true, force: true }).catch(() => {
+    // Error details from filesystem APIs can contain the full local path.
+    console.error('Failed to clean up external edit temporary files.')
   })
 }
 

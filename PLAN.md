@@ -1,374 +1,256 @@
-# HedgePort Roadmap
+# HedgePort ロードマップ
 
-## Product Direction
+## プロダクトの方針
 
-HedgePort is an Electron desktop client for working with remote files and related
-data sources from one application.
+HedgePort は、リモートファイルや関連データソースを一つのアプリで扱う Electron デスクトップクライアントです。
 
-The current core is a two-pane file manager for SFTP, S3, and local files. New
-features should preserve these boundaries:
+現在の中心機能は、SFTP、S3、ローカルファイルを扱う2ペインのファイルマネージャーです。機能を追加するときは、次の境界を保ちます。
 
-- File-like systems use `StorageProvider`.
-- Credentials and filesystem access stay in the main process.
-- Renderer access goes through narrow preload APIs.
-- Non-file data sources such as DynamoDB and SQL databases use a separate
-  abstraction and UI instead of pretending that tables and records are files.
+- ファイルシステム型の接続先には `StorageProvider` を使う。
+- 認証情報とファイルシステムへのアクセスは main process に置く。
+- renderer からのアクセスには、用途を限定した preload API を使う。
+- DynamoDB や SQL データベースなど、ファイルではないデータソースには専用の抽象化と UI を用意する。テーブルやレコードをファイルとして扱わない。
 
-## Current Baseline
+## 現在の実装状況
 
-Implemented:
+実装済み:
 
-- SFTP and account-level S3 connections
-- Connection persistence and connection tests
-- Remote and local file browsing
-- Upload, download, delete, rename, directory creation, copy, and batch actions
-- Multiple selection, context menus, toolbar actions, and shortcuts
-- Multiple tabs and optional local pane
-- Text preview/editing with encoding selection and automatic detection
-- External editor integration
-- Drag-and-drop ordering of saved connections
-- Settings (persisted, versioned): theme (system/light/dark), font size, display
-  density, show hidden files, confirm-before-delete, and display language (ja/en)
-- Light/dark theming via CSS custom-property tokens, applied across all screens
-- Japanese/English UI localization, switchable without restart
+- SFTP とアカウント単位の S3 接続
+- 接続情報の保存と接続テスト
+- リモート／ローカルのファイル閲覧
+- アップロード、ダウンロード、削除、名前変更、ディレクトリ作成、コピー、一括操作
+- 選択したフォルダー名を維持する再帰的なディレクトリダウンロード
+- 複数選択、コンテキストメニュー、ツールバー操作、ショートカット
+- 複数タブと任意で表示できるローカルペイン
+- 文字コードの選択と自動判定に対応したテキストのプレビュー／編集
+- 外部エディター連携
+- 保存済み接続のドラッグ＆ドロップ並べ替え
+- バージョン管理された設定保存（テーマ、文字サイズ、表示密度、隠しファイル表示、削除前の確認、表示言語）
+- CSS custom properties のトークンによる全画面共通のライト／ダークテーマ
+- 再起動せずに切り替えられる日本語／英語 UI
 
-Known foundations that still need work:
+引き続き対応が必要な項目:
 
-- Large transfers currently read whole files into memory.
-- Transfer progress, cancellation, retry, and resume are not implemented.
-- The standalone preview window shows real files with in-preview search; diff in
-  the preview window is not implemented yet.
+- 大きなファイルの転送では、現在もファイル全体をメモリに読み込む。
+- 転送の進捗表示、キャンセル、再試行、再開は未実装。
+- 独立したプレビューウィンドウでは実ファイルの表示、ウィンドウ内検索、編集に対応している。差分表示は未実装。
 
-## Prioritized Roadmap
+## 優先度別ロードマップ
 
-### P0: Security And Settings Foundation
+### P0: セキュリティと設定の基盤
 
-#### Settings Screen
+#### 設定画面
 
-Create a dedicated settings screen rather than adding more controls to the
-connection selection screen.
+接続先選択画面に操作項目を増やすのではなく、独立した設定画面を作ります。
 
-Initial sections:
+初期セクション:
 
-- Appearance
-- Connection data
-- Security
-- Transfer behavior
-- Advanced
+- 外観
+- 接続データ
+- セキュリティ
+- 転送動作
+- 詳細設定
 
-Settings must have a versioned persisted schema and migration path. Keep
-application settings separate from connection records and transient UI state.
+設定にはバージョン付きの保存形式と移行手順を用意します。アプリ設定は接続情報や一時的な UI 状態と分けて保存します。
 
-Status: a settings modal is implemented with the Appearance and Files sections
-(theme, language, font size, display density, show hidden files, confirm before
-delete). The schema is versioned and persisted in `userData/settings.json`
-separately from connections, with migration that corrects unknown/invalid
-fields. The Connection data, Security, Transfer behavior, and Advanced sections
-remain future work.
+状況: 設定モーダルを実装済みです。外観とファイルのセクションがあり、テーマ、言語、文字サイズ、表示密度、隠しファイルの表示、削除前の確認を設定できます。設定形式にはバージョンがあり、接続情報とは別に `userData/settings.json` へ保存します。不明または不正な項目は移行時に補正します。接続データ、セキュリティ、転送動作、詳細設定の各セクションは今後の作業です。
 
-#### Theme Selection
+#### テーマ選択
 
-Support:
+対応するテーマ:
 
-- System
-- Light
-- Dark
+- システム設定に合わせる
+- ライト
+- ダーク
 
-Use CSS custom properties as design tokens. Apply theme changes to the main
-window, editor/preview UI, dialogs, and future settings windows consistently.
-Persist only the theme preference, not computed colors.
+CSS custom properties をデザイントークンとして使います。メインウィンドウ、エディター／プレビュー UI、ダイアログ、今後の設定ウィンドウに一貫してテーマを適用します。保存するのはテーマ設定だけとし、計算後の色は保存しません。
 
-Status: implemented. Colors are consolidated into `--c-*` tokens with `:root`
-(dark) and `:root[data-theme='light']` overrides; `system` follows
-`matchMedia('(prefers-color-scheme: dark)')`. Font size and density are applied
-via root `data-*` attributes (rem-based font scaling and a `--density-scale`
-padding token). The standalone preview window loads and applies the same
-settings.
+状況: 実装済みです。色は `--c-*` トークンに集約し、`:root`（ダーク）と `:root[data-theme='light']` で上書きします。「システム設定に合わせる」場合は `matchMedia('(prefers-color-scheme: dark)')` に従います。文字サイズと表示密度はルート要素の `data-*` 属性で適用します（rem による文字サイズ変更と、余白用の `--density-scale` トークン）。独立したプレビューウィンドウにも同じ設定を読み込んで適用します。
 
-#### Secure Credential Storage
+#### 認証情報の安全な保存
 
-Move SFTP passwords and AWS credentials away from plaintext JSON.
+SFTP のパスワードと AWS 認証情報を、平文の JSON から分離します。
 
-Preferred direction:
+方針:
 
-- Encrypt secrets with Electron `safeStorage`, or use the OS credential store.
-- Keep non-secret connection metadata separate from encrypted secret values.
-- Migrate existing plaintext records without losing connections.
-- Define behavior when secure storage is unavailable.
+- Electron `safeStorage` で認証情報を暗号化するか、OS の認証情報ストアを使う。
+- 機密でない接続情報と、暗号化した認証情報を分けて保存する。
+- 既存の平文データを移行し、接続情報を失わないようにする。
+- 安全な保存機能を使えない場合の動作を定める。
 
-Status: implemented. `connections.json` holds only non-secret metadata; SFTP
-passwords and S3 `accessKeyId` / `secretAccessKey` / `sessionToken` are stored
-in a separate `userData/connectionSecrets.json` as `safeStorage`-encrypted
-values (`main/connectionSecrets.ts`). Secrets are decrypted only in the main
-process at connection time (`createStorageProvider` → provider) and never cross
-the preload/renderer boundary. `safeStorage` is mandatory: when
-`isEncryptionAvailable()` is false, saving / decrypting / migration fails clearly
-with no plaintext fallback and no master password. Existing plaintext records are
-migrated on load (encrypt into the secret store, then strip plaintext from
-`connections.json`); migration writes the secret store first and only rewrites
-`connections.json` on success, so a failure never leaves files partially rewritten.
-Direct OS credential-store integration and a master password remain out of scope.
+状況: 実装済みです。`connections.json` には機密でない接続情報だけを保存します。SFTP のパスワードと S3 の `accessKeyId` / `secretAccessKey` / `sessionToken` は、別ファイルの `userData/connectionSecrets.json` に `safeStorage` で暗号化して保存します（`main/connectionSecrets.ts`）。認証情報を復号するのは接続時の main process 内だけです（`createStorageProvider` → provider）。preload / renderer の境界を越えて認証情報を渡すことはありません。`safeStorage` は必須です。`isEncryptionAvailable()` が false の場合、保存、復号、移行を明確に失敗させ、平文へのフォールバックは行いません。マスターパスワードもありません。既存の平文データは読み込み時に移行します（認証情報ストアへ暗号化して保存した後、`connections.json` から平文を取り除きます）。移行では先に認証情報ストアを書き込み、成功した場合だけ `connections.json` を更新するため、失敗時にファイルを中途半端な状態にしません。OS の認証情報ストアへの直接連携とマスターパスワードは対象外です。
 
-This should be completed before connection export is treated as a general
-sharing feature.
+接続設定のエクスポートを一般的な共有機能として扱う前に、この基盤を整える必要があります。
 
-### P1: Connection Import And Export
+### P1: 接続設定のインポートとエクスポート
 
-Expose import/export from the settings screen only.
+インポート／エクスポートは設定画面からのみ利用できるようにします。
 
-Export format:
+エクスポート形式:
 
-- Versioned JSON envelope
-- Exclude internal or device-specific fields: `id`, `lastLocalPath`
-- Generate new IDs on import
-- Clearly state whether credentials are included
-- Eventually support both "configuration only" and "include credentials"
+- バージョン付き JSON エンベロープ
+- 内部情報や端末固有の項目（`id`、`lastLocalPath`）を除外する
+- インポート時に新しい ID を発行する
+- 認証情報を含むかどうかを明示する
+- 将来的に「設定のみ」と「認証情報を含める」の両方に対応する
 
-Duplicate handling:
+重複の扱い:
 
-- SFTP: treat normalized `host + port + username` as the same server/user.
-  Normalize host with `trim().toLowerCase()` and username with `trim()`.
-  Do not include `name`, `password`, or `rootPath` in duplicate identity.
-- S3: define the final rule during implementation. The current candidate is
-  `accessKeyId + region`; do not use secret keys, session tokens, or display
-  names as identity.
-- Show imported, skipped, and failed counts before committing changes.
-- Never silently overwrite an existing connection.
+- SFTP: 正規化した `host + port + username` が同じなら、同一のサーバー／ユーザーとして扱う。ホストには `trim().toLowerCase()`、ユーザー名には `trim()` を適用する。`name`、`password`、`rootPath` は重複判定に使わない。
+- S3: 最終的なルールは実装時に決める。現在の候補は `accessKeyId + region`。シークレットキー、セッショントークン、表示名は識別に使わない。
+- 変更を確定する前に、取り込み、スキップ、失敗の件数を表示する。
+- 既存の接続情報を無断で上書きしない。
 
-Security requirements:
+セキュリティ要件:
 
-- Warn that credential-bearing exports are sensitive plaintext.
-- Write exported files with owner-only permissions where supported.
-- Validate format, version, size, and every record in the main process.
-- Do not expose arbitrary file paths to the renderer.
+- 認証情報を含むエクスポートは機密性の高い平文であると警告する。
+- 対応環境では、エクスポートファイルのアクセス権を所有者のみにする。
+- main process で形式、バージョン、サイズ、すべてのレコードを検証する。
+- 任意のファイルパスを renderer に公開しない。
 
-### P1: Preview Window
+### P1: プレビューウィンドウ
 
-Connect the standalone preview window to actual local and remote files.
+独立したプレビューウィンドウを、実際のローカル／リモートファイルに接続します。
 
-Status: real file preview, Search Within Preview, and Edit Within Preview are
-implemented; Diff is not yet done. The default Open for a file — double-click, Enter, the toolbar eye, and
-the context-menu Open, in any pane (local/SFTP/S3) — all open a dedicated preview
-window through one shared dispatch; directories navigate in place on the same
-paths. Built-in Editor / System Default / Choose Application are explicit choices
-under Open…. The main process owns a `PreviewSession` per preview window, bound
-to the window's `webContents.id`, and never embeds credentials or local absolute
-paths in the URL/hash/query. `openPreview(request)` validates the typed
-`PreviewOpenRequest` (`shared/preview.ts`) in main and creates one BrowserWindow
-per request (multiple previews can be open). `validatePreviewRequest` enforces a
-local absolute path / remote canonical virtual path, rejects NUL and control
-characters, validates the remote target, and derives the display name from the
-validated path (the renderer-supplied name is not trusted). `preview:metadata`
-and `preview:load(encoding)` only read the session bound to `event.sender`, so
-the main window or another preview cannot read it; sessions are destroyed on
-window close / render-process-gone, and a failed initial render load deletes the
-session and destroys the window before rejecting. Reads reuse the existing
-validated `readTextFile`/`readLocalText` (path/NUL/encoding auto-or-manual; the
-encoding argument is also re-validated at the main boundary), but with a
-preview-specific size limit injected: the Built-in Editor keeps 1 MiB
-(`MAX_EDITABLE_TEXT_BYTES`) while preview allows up to 20 MiB
-(`MAX_PREVIEW_TEXT_BYTES`), enforced before decode with a preview-specific
-too-large message. The size cap is checked after the provider/fs reads the whole
-file into memory (current readers have no streaming path), so it bounds decode,
-not the read itself — noted as a known constraint.
-The preview renderer receives only `PreviewMeta` (name, display path, source) for
-the header and a `PreviewDocument` (meta + `TextDocument` + the file's
-`byteLength`) for the body — no target/secret. The `byteLength` lets the renderer
-decide whether the file is small enough to edit. Metadata is fetched separately from content, so the file name /
-source / path stay visible even while a decode/read fails. Content is rendered as
-React text nodes (never `dangerouslySetInnerHTML`); the encoding select offers
-Auto/UTF-8/Shift_JIS/EUC-JP and keeps the user's choice — picking Auto stays Auto
-(re-detects on reload) and the detected encoding is shown only as a supplement on
-the Auto label, not by switching the selected value. A request-id guard stops a
-stale load from overwriting a newer selection.
+状況: 実ファイルのプレビュー、プレビュー内検索、プレビュー内編集は実装済みです。差分表示は未実装です。ローカル／SFTP／S3 のどのペインでも、ファイルの既定の「開く」操作（ダブルクリック、Enter、ツールバーの目のアイコン、コンテキストメニュー）は共通の処理を通じて専用のプレビューウィンドウを開きます。ディレクトリは同じペイン内で移動します。組み込みエディター、システム既定アプリ、アプリを選択して開く操作は、「開く…」メニューから明示的に選択します。
 
-#### Search Within Preview
+main process はプレビューウィンドウごとに `PreviewSession` を保持し、ウィンドウの `webContents.id` に結び付けます。URL、hash、query に認証情報やローカルの絶対パスを含めません。`openPreview(request)` は main process で型付きの `PreviewOpenRequest`（`shared/preview.ts`）を検証し、リクエストごとに BrowserWindow を作成します（複数ウィンドウを同時に開けます）。`validatePreviewRequest` はローカルの絶対パスまたはリモートの正規化済み仮想パスを要求し、NUL 文字と制御文字を拒否して、リモート接続先を検証します。表示名は検証済みパスから導出し、renderer から渡された名前は信用しません。
 
-Status: implemented.
+`preview:metadata` と `preview:load(encoding)` は `event.sender` に結び付いたセッションだけを参照するため、メインウィンドウや別のプレビューから内容を読み取ることはできません。ウィンドウを閉じたとき、または renderer process が終了したときにセッションを破棄します。初回の読み込みに失敗した場合は、エラーを返す前にセッションとウィンドウを破棄します。
 
-- Find next/previous
-- Match count and current match
-- Case-sensitive toggle
-- Keyboard shortcuts (`Mod+F` / `Cmd+F`, `Enter`, `Shift+Enter`, `Escape`)
-- Preserve selected encoding (search recomputes after an encoding reload and
-  reconciles the active match)
-- Avoid blocking the renderer for large text (plain single text node when there
-  is no query; only segment the body when searching, with a `MAX_MATCHES` cap
-  surfaced in the UI)
+読み込みには、既存の検証済み関数 `readTextFile` / `readLocalText` を使います（パス、NUL 文字、文字コードの自動判定／手動指定を検証し、文字コードの引数も main process で再検証します）。プレビューには専用のサイズ制限を適用します。組み込みエディターの上限は 1 MiB（`MAX_EDITABLE_TEXT_BYTES`）、プレビューの上限は 20 MiB（`MAX_PREVIEW_TEXT_BYTES`）で、デコード前に検証して専用のエラーメッセージを表示します。現在はストリーミング読み込みに対応していないため、サイズ制限の確認前に provider／ファイルシステムがファイル全体をメモリへ読み込みます。この上限が制限するのはデコード対象のサイズであり、読み込み時のメモリ使用量ではありません。
 
-The search itself is a literal (non-regex) string search in a pure renderer
-module (`features/preview/previewSearch.ts`), independent of Chromium's
-`webContents.findInPage`; case-insensitive matching keeps indices aligned to the
-original text. Browser-native find is preventDefaulted.
+プレビュー renderer に渡すのは、ヘッダー用の `PreviewMeta`（名前、表示用パス、接続元）と、本文用の `PreviewDocument`（meta、`TextDocument`、ファイルの `byteLength`）だけです。接続先や認証情報は渡しません。`byteLength` は renderer が編集可能なサイズか判断するために使います。メタデータは本文とは別に取得するため、読み込みやデコードに失敗してもファイル名、接続元、パスは表示できます。内容は React のテキストノードとして描画し、`dangerouslySetInnerHTML` は使いません。文字コードの選択肢は Auto／UTF-8／Shift_JIS／EUC-JP で、利用者の選択を維持します。Auto を選んだ場合も選択値は Auto のままで、再読み込み時に自動判定します。判定結果は Auto のラベルに補足表示し、選択値を切り替えません。リクエスト ID による判定で、古い読み込み結果が新しい選択を上書きしないようにします。
 
-Future enhancement:
+#### プレビュー内検索
 
-- Add an optional regular-expression mode with an explicit toggle.
-- Show invalid-pattern errors without hiding the current file contents.
-- Keep match/result limits and avoid patterns that can block the renderer.
+状況: 実装済みです。
 
-#### Edit Within Preview
+- 次／前の一致箇所へ移動する。
+- 一致件数と現在の一致位置を表示する。
+- 大文字小文字を区別するか切り替える。
+- キーボードショートカット（`Mod+F`／`Cmd+F`、`Enter`、`Shift+Enter`、`Escape`）に対応する。
+- 選択中の文字コードを維持する（文字コードを変更して再読み込みした後に検索し直し、一致位置を調整する）。
+- 大きなテキストで renderer の応答を妨げない（検索語がない場合は単一のテキストノードで表示する。検索中だけ本文を分割し、`MAX_MATCHES` の上限を UI に表示する）。
 
-Status: implemented.
+検索は正規表現を使わない文字列検索です。Chromium の `webContents.findInPage` には依存せず、renderer の純粋なモジュール（`features/preview/previewSearch.ts`）で処理します。大文字小文字を区別しない検索でも、元のテキストに対する一致位置がずれないようにします。ブラウザー標準の検索動作は既定動作を抑止します。
 
-An Edit button at the top of the preview window switches it from the read-only
-viewer to an in-window editor (local / SFTP / S3 all save). View mode keeps the
-existing 20 MiB display/search; edit mode is allowed only for files of at most
-1 MiB (`MAX_EDITABLE_TEXT_BYTES`, decided from the document's `byteLength`).
-Larger files show a clear i18n message and stay open for viewing. The editor
-seeds from the loaded document's concrete encoding and UTF-8 BOM and lets the user
-pick encoding/BOM exactly like the Built-in Editor (changing encoding reloads and
-re-decodes the file; if that reload comes back over 1 MiB the buffer is not
-replaced — it returns to view with the too-large message). `Ctrl/Cmd+S` saves.
-On a successful save the renderer updates the in-window document (text/encoding/BOM
-plus the byte length main actually wrote), so cancelling back to view shows the new
-content and re-entering edit seeds the new content — it can never silently re-save
-stale text over a newer revision. Closing the window with unsaved changes prompts
-for confirmation: the Close button confirms explicitly, and a `beforeunload`
-handler also runs `window.confirm` on a dirty OS-window close and only cancels the
-close when the user declines (Electron's `beforeunload` otherwise cancels
-silently).
+今後の改善:
 
-Saving is conflict-aware and both the conflict detection and the overwrite
-decision are made in main, never via a renderer boolean. The main process keeps a
-stable content revision per session (SHA-256 of the file bytes captured at load and
-after each successful save, provider-agnostic; `contentRevision.ts`).
-`preview:save` is bound to `event.sender.id` and the renderer passes only
-`{ text, encoding, bom, overwriteToken? }` — never a target/path. Before writing,
-main re-reads the current revision; if it differs from the session's known
-revision, main issues a one-time overwrite token bound to that session and the
-observed conflict revision and returns `conflict { token }` without writing. The
-renderer asks the user and only retries with that exact token. On retry main
-re-checks: the token must match the session's pending token (invalid / reused /
-another window's tokens are rejected) and the live revision must still equal the
-revision the token was issued for — if the file changed again, a fresh
-`conflict { token }` is returned instead of overwriting. The pending token is
-discarded on successful save, on reload, and on window close. Reads/writes reuse
-the existing validated `*WithRevision` reader/writer helpers (path/NUL/encoding
-checks, symlink/TOCTOU protection for local, 1 MiB encode cap), and writers return
-the written revision and byte length, so no save logic is duplicated. (S3 read is
-eventually consistent, so a just-written object may briefly read stale on a
-subsequent conflict check — a known provider limitation.)
+- 明示的な切り替え付きで、正規表現モードを追加する。
+- 現在のファイル内容を隠さずに、不正なパターンのエラーを表示する。
+- 一致件数と結果数に上限を設け、renderer を停止させるパターンを避ける。
 
-Future enhancement:
+#### プレビュー内編集
 
-- Surface a non-blocking "saved" toast and last-saved indicator.
-- Optionally show a diff before overwriting on conflict.
+状況: 実装済みです。
+
+プレビューウィンドウ上部の編集ボタンで、読み取り専用表示からウィンドウ内エディターに切り替えます（ローカル／SFTP／S3 への保存に対応）。表示モードでは最大 20 MiB のファイルを表示・検索でき、編集できるのは最大 1 MiB のファイルだけです（`MAX_EDITABLE_TEXT_BYTES`。文書の `byteLength` で判定）。それより大きなファイルでは、内容を表示したまま編集できない旨を翻訳済みメッセージで知らせます。エディターは読み込んだ文書の文字コードと UTF-8 BOM を初期値として使い、組み込みエディターと同様に変更できます。文字コードを変えるとファイルを再読み込みして再デコードします。再読み込み後のサイズが 1 MiB を超える場合は編集バッファを置き換えず、サイズ超過メッセージとともに表示モードへ戻ります。`Ctrl/Cmd+S` で保存します。
+
+保存に成功すると renderer は文書を更新します（テキスト、文字コード、BOM、および main が実際に書き込んだバイト数）。そのため、表示モードに戻ったときは新しい内容が表示され、再度編集するときも更新後の内容が初期値になります。古い内容を新しい版へ誤って再保存することはありません。未保存の変更がある状態でウィンドウを閉じると確認を表示します。閉じるボタンでは明示的に確認し、OS のウィンドウを閉じる場合も変更があれば `beforeunload` handler から `window.confirm` を実行します。利用者がキャンセルした場合だけ閉じる操作を取り消します（Electron では `beforeunload` がそれ以外の場合に無言で閉じる操作を取り消すため）。
+
+保存時の競合を検出し、競合の有無と上書きの判断は renderer から渡された真偽値に頼らず main process で行います。main process はセッションごとに内容の版を保持します（読み込み時と保存成功後のファイルバイト列から計算する SHA-256。provider に依存しません。`contentRevision.ts`）。
+
+`preview:save` は `event.sender.id` に結び付けます。renderer が渡せるのは `{ text, encoding, bom, overwriteToken? }` だけで、接続先やパスは渡しません。書き込み前に main が現在の版を再読み込みし、セッションが把握している版と異なる場合は、そのセッションと競合時の版に結び付いた一度限りの上書きトークンを発行して `conflict { token }` を返します（この時点では書き込みません）。renderer は利用者に確認し、同じトークンでのみ再試行します。再試行時にはトークンがセッションの保留中トークンと一致すること（不正、再利用、別ウィンドウのトークンは拒否）と、現在の版がトークン発行時の版と一致することを main が再確認します。その後さらにファイルが変更されていた場合は上書きせず、新しい `conflict { token }` を返します。保留中のトークンは保存成功時、再読み込み時、ウィンドウを閉じるときに破棄します。
+
+読み書きには既存の検証済み `*WithRevision` reader／writer helper を再利用します（パス、NUL 文字、文字コードの検証、ローカルファイルでのシンボリックリンク／TOCTOU 対策、エンコード後 1 MiB の上限）。writer は書き込んだ版とバイト数を返すため、保存処理を重複実装しません。S3 は結果整合性のため、直後の競合確認で書き込み済みオブジェクトの古い内容が一時的に読み取られる可能性があります（既知の provider の制約）。
+
+今後の改善:
+
+- 操作を妨げない「保存済み」通知と最終保存時刻を表示する。
+- 競合時に上書き前の差分を表示できるようにする。
 
 #### Diff
 
-Start with text files:
+まずテキストファイルに対応します。
 
-- Compare local vs remote
-- Compare two selected files
-- Side-by-side and unified views
-- Added, removed, and changed line highlighting
-- Ignore whitespace option
-- Encoding-aware reads
+- ローカルとリモートのファイルを比較する。
+- 選択した2つのファイルを比較する。
+- 左右分割表示と統合表示を用意する。
+- 追加、削除、変更された行を強調表示する。
+- 空白を無視するオプションを用意する。
+- 文字コードを考慮して読み込む。
 
-Diff is read-only in the first version. Merge/edit actions should be a later
-feature because conflict handling and save destinations require separate design.
+初版の差分表示は読み取り専用にします。マージや編集は、競合処理と保存先の設計が別途必要なため、後続の機能とします。
 
-### P1: Content Search (Grep)
+### P1: ファイル内容の検索（grep）
 
-File-name filtering already exists in each pane. Grep is a different feature:
-recursive search through file contents.
+各ペインにはファイル名による絞り込みがあります。grep はこれとは別の機能で、ファイルの内容を再帰的に検索します。
 
-MVP:
+最小構成:
 
-- Search from the current directory
-- Query, literal/regular-expression mode, case sensitivity, and file-name
-  include/exclude patterns
-- Stream results as `path + line number + excerpt`
-- Open a result in preview/editor at the matching line
-- Cancellation, result limits, file-size limits, and binary-file exclusion
-- Clear reporting for unreadable files and partial failures
+- 現在のディレクトリから検索する。
+- 検索語、リテラル／正規表現モード、大文字小文字の区別、ファイル名の包含／除外パターンを指定できるようにする。
+- `path + line number + excerpt` の形式で結果を順次表示する。
+- 検索結果から一致行をプレビュー／エディターで開けるようにする。
+- キャンセル、結果数とファイルサイズの上限、バイナリファイルの除外に対応する。
+- 読み取れないファイルや一部失敗した結果を明確に知らせる。
 
-Implementation notes:
+実装上の注意:
 
-- Run traversal and decoding in the main process.
-- Use bounded concurrency and never load an entire directory tree into memory.
-- S3 requests can be expensive; show scope and cancellation clearly.
-- Do not shell out to system `grep` as the primary implementation because
-  remote providers and cross-platform behavior need one contract.
+- ディレクトリ走査とデコードは main process で行う。
+- 並列数に上限を設け、ディレクトリツリー全体をメモリへ読み込まない。
+- S3 へのリクエストはコストがかかる場合があるため、検索範囲とキャンセル方法を明確にする。
+- リモート provider と各 OS で共通の仕様が必要なため、システムの `grep` を主要な実装手段として呼び出さない。
 
-### P1: Mouse Navigation
+### P1: マウスによるディレクトリ移動
 
-Support hardware back/forward buttons and equivalent browser navigation events
-for directory history.
+マウスの戻る／進むボタンと、それに相当するイベントでディレクトリ履歴を移動できるようにします。
 
-Status: implemented. The main window captures Windows/Linux `app-command`
+状況: 実装済みです。メインウィンドウでは Windows/Linux の `app-command`
 (`browser-backward`/`browser-forward`, preventDefault + forward to renderer) and
-macOS trackpad `swipe` (right=back, left=forward); the preview window does not.
-A preload `onHistoryNavigation(listener)` exposes only the direction with an
-unsubscribe. The renderer also captures auxiliary mouse buttons (DOM `button`
-3/4) and preventDefaults them (and skips navigation when the mousedown target is
-a text input, since focus has not moved yet at mousedown). FilerWorkspace pushes
-each input onto a queue whose items pin the destination pane+tabId at enqueue
-time, then applies them one-at-a-time (awaiting each) through a per-pane
-imperative handle (`PaneHandle.navigate`); items for a no-longer-active tab or an
-unmounted pane are dropped. Each pane shares one `navigateBack`/`navigateForward`
-with its toolbar buttons. History/path/view updates commit only on a successful
-list (commit-on-success): a failed read keeps the current location, history, and
-view, so back/forward availability and the breadcrumb stay consistent and the
-action is retryable (back/forward still work while errored). IPC↔DOM duplicates
-of the same physical input are de-duped (same direction + different source within
-a short window); the rejected observation is still recorded so an immediately
-following same-source input is not dropped. Same-source repeats are not de-duped.
-Mapping/de-dupe logic is in pure, unit-tested functions
+macOS のトラックパッド `swipe`（右=戻る、左=進む）を捕捉します。プレビューウィンドウは対象外です。preload の `onHistoryNavigation(listener)` は方向だけを公開し、登録解除関数を返します。renderer では補助マウスボタン（DOM の `button` 3/4）も捕捉して既定動作を抑止します。mousedown 時点ではフォーカスがまだ移動していないため、テキスト入力欄上での操作は移動に使いません。
+
+FilerWorkspace は各入力をキューに入れ、追加時点の移動先ペインと tabId を固定してから、ペインごとの imperative handle（`PaneHandle.navigate`）を通して一件ずつ処理します。すでにアクティブでないタブやアンマウント済みのペイン向けの入力は破棄します。各ペインのツールバーボタンとマウス操作は、同じ `navigateBack` / `navigateForward` を使います。履歴、パス、表示内容は一覧取得が成功した場合だけ更新します。読み込みに失敗した場合は現在の場所、履歴、表示内容を保つため、パンくずと戻る／進むの状態が崩れず、エラー表示中も再試行できます。
+
+同じ物理入力が IPC と DOM の両方から届いた場合は、短い時間内の同方向・異なる入力元の重複を除外します。除外した入力も記録するため、直後に届く同じ入力元からの別操作を誤って落としません。同じ入力元からの連続操作は重複扱いしません。対応付けと重複除外は、純粋関数としてテスト済みです
 (`main/navigationInput.ts`, `features/filer/mouseNavigation.ts`).
 
-- Mouse Back navigates the focused pane to its previous directory.
-- Mouse Forward navigates the focused pane to its next directory.
-- Remote and local pane histories remain independent.
-- Do nothing when the focused pane has no matching history entry.
-- Prevent Electron/Chromium's default navigation so one input causes exactly one
-  directory transition.
-- Ignore navigation input while a modal, editor, or text field is actively
-  handling input.
-- Keep the existing Back/Forward toolbar buttons and use the same navigation
-  functions so mouse and button behavior cannot diverge.
-- Verify behavior on macOS, Windows, and Linux because auxiliary mouse buttons
-  and trackpad gestures can surface through different Electron events.
+- マウスの戻る／進むボタンで、フォーカス中のペインのディレクトリ履歴を移動する。
+- リモートとローカルの履歴は独立させる。
+- 対応する履歴がない場合は何もしない。
+- Electron/Chromium の既定の移動を抑止し、一つの入力で移動が二重に起きないようにする。
+- モーダル、エディター、テキスト入力欄が入力を処理している間は移動しない。
+- 既存の戻る／進むボタンと同じ関数を使い、マウス操作とボタン操作の挙動を揃える。
+- 補助マウスボタンとトラックパッド操作が OS ごとに異なる Electron イベントとして届くため、macOS、Windows、Linux で動作を確認する。
 
-### P1: Window Chrome And Native Control Integration
+### P1: ウィンドウ外観とネイティブ操作部品の統合
 
-Status: implemented.
+状況: 実装済みです。
 
-Make the Electron window frame and native-looking form controls feel consistent
-with the selected HedgePort theme.
+Electron のウィンドウ枠とネイティブ風のフォーム部品を、選択中の HedgePort テーマに合わせます。
 
-Window title bar (implemented):
+ウィンドウタイトルバー（実装済み）:
 
-- On macOS the main and preview `BrowserWindow`s use `titleBarStyle: 'hiddenInset'`
+- macOS ではメインとプレビューの `BrowserWindow` に `titleBarStyle: 'hiddenInset'`
   with the native traffic lights retained; Windows/Linux keep the native frame
   (no imitation traffic lights). The mac/non-mac options come from a pure,
   electron-free `windowChromeOptions(process.platform)` (`main/windowChrome.ts`,
   unit-tested).
-- The app background extends into the title-bar area: the top strips
+- アプリの背景色をタイトルバー領域まで延長します。上部の領域
   (`workspace-bar`, `preview-header`, and the connection screen's gradient) use
   the same theme background, so the top does not show as a separate block.
-- `-webkit-app-region: drag` is set on those top strips (mac only, gated by a
+- 上部領域には `-webkit-app-region: drag` を設定します（macOS のみ。ルート要素の
   `data-platform='darwin'` root attribute); buttons, tabs, inputs, selects,
   textareas, labels, and the checkbox controls are `no-drag` so they stay
   interactive. The connection card itself is `no-drag` (only the surrounding
   gradient drags) so its content stays selectable/clickable.
-- A left inset (`padding-left`) keeps the tabs/toolbar and the preview header
+- 左側の余白（`padding-left`）でタブ、ツールバー、プレビュー見出しを
   clear of the traffic lights; in fullscreen (no traffic lights) the inset is
   collapsed. Fullscreen state is pushed from main (`enter/leave-full-screen`) via
   `onFullScreenChange` and toggles a `data-fullscreen` root attribute.
-- The renderer learns the platform from a narrow read-only `platform` value
+- renderer は preload が公開する読み取り専用の `platform` 値から OS を取得します
   exposed by preload (no `navigator` UA sniffing). `applyPlatform` /
   `applyFullScreen` (`features/platform/platform.ts`) set the root attributes and
   are unit-tested.
-- Dragging, the native double-click title-bar action, and fullscreen/maximize are
+- ドラッグ、タイトルバーのダブルクリック操作、全画面／最大化は
   not intercepted (drag regions are CSS-only and interactive controls are
   no-drag). Real-device verification of fullscreen/maximize/restore and keyboard
   window commands is still recommended (jsdom cannot exercise native chrome).
 
-Form controls (implemented for file selection):
+フォーム部品（ファイル選択用は実装済み）:
 
-- File list checkboxes (rows and select-all) use `appearance: none` with a
+- ファイル一覧のチェックボックス（各行と全選択）では `appearance: none` を使い、
   theme-token design (background/border/radius, hover, checked check-mark,
   `indeterminate` dash, `focus-visible` ring, disabled) that scales with
   light/dark, font-size, and density. The native `<input type="checkbox">` is
@@ -376,119 +258,82 @@ Form controls (implemented for file selection):
   that makes the whole ~34px cell a hit target without increasing row height, and
   the cell stops click propagation so row open/selection does not double-fire.
   `forced-colors` falls back to the native rendering.
-- Remaining checkboxes (settings, editor/preview BOM, search "match case") still
+- 残りのチェックボックス（設定、エディター／プレビューの BOM、検索の「大文字小文字を区別」）は
   use the default control; unifying them is a follow-up.
 
-### P1: Keyboard File Navigation And Selection
+### P1: キーボードによるファイル移動と選択
 
-Make the file table usable without moving between rows with the mouse.
+マウスを使わずにファイル一覧の行を移動・選択できるようにします。
 
-- Maintain a keyboard cursor (active row) separately from the selected items.
-- Up/Down moves the active row instead of scrolling the file list directly.
-- Keep the active row visible with the minimum required scroll adjustment.
-- Space toggles selection for the active row without opening it.
-- Shift+Up/Down extends or shrinks a contiguous range from the selection anchor.
-- Mod+Space toggles the active row while preserving other selected rows.
-- Home/End moves to the first/last visible row.
-- Enter opens the active file or directory using the existing default Open
-  behavior.
-- The active row must have a visible theme-aware focus indicator distinct from
-  the selected-row style.
-- Search, sorting, directory changes, hidden-file changes, and reloads must
-  reconcile the active row and selection so invisible entries cannot remain
-  actionable.
-- Keyboard handling applies only to the focused pane and must not run while an
-  input, textarea, select, modal, or editor is handling input.
-- Reuse the existing selection model and file actions rather than creating a
-  second selection state with different context-menu or toolbar behavior.
-- Add ARIA semantics for the active row and selected rows, and test single,
-  toggle, range, boundary, filtered, and empty-list behavior.
+- 選択項目とは別に、キーボード操作中の行を管理する。
+- 上下キーでファイル一覧を直接スクロールするのではなく、操作中の行を移動する。
+- 必要最小限のスクロールで操作中の行を表示範囲内に保つ。
+- Space キーでファイルを開かずに選択状態を切り替える。
+- Shift+上下キーで選択アンカーから連続範囲を拡張／縮小する。
+- Mod+Space で他の選択項目を維持したまま操作中の行を切り替える。
+- Home/End キーで表示中の先頭／末尾の行へ移動する。
+- Enter キーで既存の既定の Open 動作を使い、操作中のファイルまたはディレクトリを開く。
+- 操作中の行には、選択行と区別できるテーマ対応のフォーカス表示を付ける。
+- 検索、並べ替え、ディレクトリ移動、隠しファイル設定の変更、再読み込み後に操作中の行と選択状態を調整し、非表示項目を操作できないようにする。
+- フォーカス中のペインだけでキー操作を処理する。input、textarea、select、モーダル、エディターが入力を処理している間は動作させない。
+- コンテキストメニューやツールバーの挙動が分岐しないよう、既存の選択モデルとファイル操作を再利用する。
+- 操作中の行と選択行に ARIA の意味付けを加え、単一選択、切り替え、範囲、境界、絞り込み後、空一覧の動作をテストする。
 
-### P1: Localization Completion
+### P1: 日本語／英語対応の完了
 
-Complete Japanese and English coverage for every user-visible renderer string.
+renderer に表示するすべての文字列を日本語と英語に対応させます。
 
-Status: implemented. ConnectionForm, FilerWorkspace/FileTable, name dialogs,
-editor/preview, external-edit banner, context menus, toolbars, navigation,
-status bar, and fallback errors are routed through the typed `features/i18n`
-dictionary and `useTranslation`. Renderer-generated status/validation messages
-are stored as structured `key + params` (or `raw` for main/server text) so they
-re-translate on language change, and open forms/dialogs/editor update live.
-Plural/count phrasing uses explicit per-language keys. A contract test
-(`src/renderer/src/i18n.contract.test.ts`) flags newly hardcoded visible
-attribute/text/dialog/sentence literals with an explicit technical-term
-allowlist (SFTP, S3, UTF-8 BOM, etc.). Main/server raw error text is
-intentionally left untranslated. Date formatting follows the selected language
-(`ja-JP` / `en-US`), not the OS locale.
+状況: 実装済みです。ConnectionForm、FilerWorkspace/FileTable、名前入力ダイアログ、エディター／プレビュー、外部編集バナー、コンテキストメニュー、ツールバー、ナビゲーション、ステータスバー、フォールバックエラーは、型付きの `features/i18n` 辞書と `useTranslation` を通して表示します。renderer が生成するステータス／検証メッセージは `key + params`（main process／サーバー由来の文言は `raw`）として保持するため、言語変更時に再翻訳され、開いているフォーム／ダイアログ／エディターにも反映されます。複数形や件数は言語ごとに明示したキーを使います。契約テスト（`src/renderer/src/i18n.contract.test.ts`）で、新たにハードコードされた属性／テキスト／ダイアログ／文の表示文字列を検出します。SFTP、S3、UTF-8 BOM などの技術用語は許可リストで扱います。main process／サーバーからの生エラーは意図的に翻訳しません。日付表示は OS の地域設定ではなく、選択中の言語（`ja-JP` / `en-US`）に合わせます。
 
-Implemented coverage:
+実装済みの範囲:
 
-- Connection create/edit form labels, help text, validation (submit and test),
-  test results, and delete actions
-- New-directory and rename dialogs
-- Editor/preview controls, encoding label, fallbacks, and external-edit status
-- Batch-operation results, fallback errors, context menus, tooltips, titles, and
-  ARIA labels, with explicit singular/plural phrasing per language
+- 接続作成／編集フォームのラベル、ヘルプ、送信／接続テスト時の入力検証、テスト結果、削除操作
+- 新規ディレクトリ作成と名前変更のダイアログ
+- エディター／プレビューの操作部品、文字コードラベル、フォールバック、外部編集の状態表示
+- 一括操作の結果、フォールバックエラー、コンテキストメニュー、ツールチップ、タイトル、ARIA ラベル。単数形／複数形は言語ごとに明示
 
-Requirements (met):
+要件（対応済み）:
 
-- Do not leave user-visible strings embedded directly in React components.
-- Keep translation keys typed and use one shared translator for toolbar,
-  context-menu, shortcut, confirmation, and status labels.
-- Preserve dynamic values such as connection names, paths, encodings, provider
-  names, counts, and file-manager names.
-- Define plural/count phrasing explicitly for both languages.
-- Main-process/server error text may remain technical English initially, but
-  renderer fallback and validation messages must be localized.
-- Add a test or lint-style contract that detects newly introduced untranslated
-  renderer literals, with explicit allowlists for technical terms.
-- Test the connection create/edit flow and new-directory/rename flow end to end
-  in both Japanese and English.
+- ユーザーに表示する文字列を React コンポーネントに直接埋め込まない。
+- ツールバー、コンテキストメニュー、ショートカット、確認、ステータス表示で型付き翻訳キーと共通の翻訳関数を使う。
+- 接続名、パス、文字コード、provider 名、件数、ファイルマネージャー名などの動的な値を保持する。
+- 日本語と英語それぞれで、複数形や件数の表現を明示する。
+- main process／サーバー由来のエラーは当面技術的な英語のままでもよいが、renderer のフォールバックと入力検証メッセージは翻訳する。
+- 技術用語の許可リストを設け、未翻訳の renderer 表示文字列を検出するテストまたは lint 相当の仕組みを追加する。
+- 接続の作成／編集と新規ディレクトリ／名前変更の一連の操作を、日本語と英語の両方でテストする。
 
-### P1: Application Icon And Launchable Distribution
+### P1: アプリアイコンと配布可能なビルド
 
-Add HedgePort application branding and produce an installable/launchable desktop
-build rather than only a development bundle.
+開発用バンドルだけでなく、インストールまたは起動できるデスクトップビルドを作成し、HedgePort のブランドを反映します。
 
-- Create a single high-resolution source icon with safe margins and transparent
-  background.
-- Generate platform assets: macOS `.icns`, Windows `.ico`, and Linux PNG sizes.
-- Use the icon for packaged applications, installers, taskbar/dock, window icon
-  where supported, and development windows where practical.
-- Add packaging configuration and scripts such as `package` / `dist` without
-  changing the existing development and test commands.
-- Define application ID, product name, executable name, artifact names, and
-  version source.
-- Verify a clean build can be installed or launched on macOS first; document
-  unsigned-build warnings until code signing/notarization is configured.
-- Keep credentials and user settings outside the packaged application so
-  upgrades do not overwrite them.
-- Add smoke checks that the packaged app starts, opens its main window, loads
-  settings/connections, and displays the expected icon.
-- Treat Windows installer and Linux package formats as follow-up deliverables
-  after the macOS packaging path is stable.
+- 余白を確保した透明背景の高解像度アイコン原版を一つ作る。
+- macOS の `.icns`、Windows の `.ico`、Linux 用の各サイズの PNG を生成する。
+- 対応可能な範囲で、パッケージ済みアプリ、インストーラー、タスクバー／Dock、ウィンドウ、開発版にアイコンを適用する。
+- 既存の開発・テスト用コマンドを変えずに、`package` / `dist` などのパッケージ設定とスクリプトを追加する。
+- アプリ ID、製品名、実行ファイル名、成果物名、バージョンの管理元を定義する。
+- まず macOS でクリーンビルドをインストールまたは起動できることを確認する。コード署名／公証を設定するまでは未署名ビルドの警告を文書化する。
+- 認証情報とユーザー設定をパッケージ外に保存し、アップグレードで上書きされないようにする。
+- パッケージ済みアプリの起動、メインウィンドウ表示、設定／接続情報の読み込み、アイコン表示を確認するスモークチェックを追加する。
+- Windows インストーラーと Linux パッケージは、macOS の配布手順が安定してから後続で対応する。
 
-### P2: Transfer Reliability
+### P2: 転送の信頼性向上
 
-- Streaming upload/download instead of whole-file buffering
-- Progress and current throughput
-- Cancellation
-- Bounded parallelism
-- Retry policy
-- Multipart upload for large S3 objects
-- Resume support where the provider permits it
-- Transfer queue/history
+- ファイル全体をメモリに読み込まず、ストリーミングでアップロード／ダウンロードする。
+- 進捗と現在の転送速度を表示する。
+- 転送をキャンセルできるようにする。
+- 並列数に上限を設ける。
+- 再試行方針を定める。
+- 大きな S3 オブジェクトのマルチパートアップロードに対応する。
+- provider が対応する場合は転送再開をサポートする。
+- 転送キューと履歴を用意する。
 
-These changes are prerequisites for treating HedgePort as a reliable large-file
-transfer client.
+これらは HedgePort を大容量ファイルにも信頼して使える転送クライアントにするための前提です。
 
-### P2: Database And DynamoDB Support
+### P2: データベースと DynamoDB への対応
 
-Database support fits HedgePort if the product is intentionally broadened from
-"file transfer client" to "connection workspace." It should not be implemented
-as another `StorageProvider`.
+製品を「ファイル転送クライアント」から「接続先ワークスペース」へ広げる場合は、データベース対応も適合します。ただし、別の `StorageProvider` として実装しないでください。
 
-Introduce a separate abstraction, for example:
+たとえば、次のような独立した抽象化を導入します。
 
 ```ts
 interface DataSourceProvider {
@@ -498,77 +343,75 @@ interface DataSourceProvider {
 }
 ```
 
-#### Recommended First Target: DynamoDB
+#### 最初の対象候補: DynamoDB
 
-DynamoDB is the best first database-like integration because the application
-already has AWS credentials and region concepts.
+DynamoDB は、アプリに AWS 認証情報とリージョンの概念がすでにあるため、最初に対応するデータベース系サービスの候補として適しています。
 
-First release should be read-only:
+初回リリースは読み取り専用にします。
 
-- List tables
-- Describe keys and indexes
-- Query by partition/sort key
-- Scan only with explicit confirmation
-- Pagination via `LastEvaluatedKey`
-- Item detail as structured JSON
-- Copy/export selected items
+- テーブル一覧
+- キーとインデックスの表示
+- パーティションキー／ソートキーによる Query
+- 明示的な確認後に限った Scan
+- `LastEvaluatedKey` によるページ送り
+- 項目の構造化 JSON 表示
+- 選択した項目のコピー／エクスポート
 
-Write, update, and delete operations should come later with explicit
-confirmation and condition expressions to avoid accidental data loss.
+書き込み、更新、削除は、誤操作によるデータ損失を防ぐため、明示的な確認と条件式を備えた後続機能にします。
 
-#### SQL Databases
+#### SQL データベース
 
-PostgreSQL/MySQL support is possible, but it is a substantially different
-product surface:
+PostgreSQL/MySQL にも対応できますが、製品の画面や操作が大きく異なります。
 
-- TLS and SSH tunnels
-- Query editor and result grid
-- Schema browsing
-- Timeouts and cancellation
-- Read-only mode
-- Transaction handling
-- Safe limits for unrestricted queries
+- TLS と SSH トンネル
+- クエリーエディターと結果グリッド
+- スキーマ表示
+- タイムアウトとキャンセル
+- 読み取り専用モード
+- トランザクション処理
+- 制限のないクエリーに対する安全な上限
 
-Add SQL only after the `DataSourceProvider` boundary and DynamoDB read-only UX
-have proven useful. Do not mix SQL query execution into the file panes.
+`DataSourceProvider` の境界と DynamoDB 読み取り専用 UI の有用性を確認してから SQL に対応します。SQL クエリーの実行をファイルペインに混在させないでください。
 
-### P2: Quality And Distribution
+### P2: 品質と配布
 
-- Main/preload IPC integration tests
-- End-to-end tests for critical connection and transfer flows
-- Structured logging with secret redaction
-- Crash/error diagnostics
-- Automatic update strategy
-- Code signing and notarization for distribution
-- Accessibility pass, including a keyboard alternative for drag ordering
+- main/preload 間の IPC 統合テスト
+- 重要な接続・転送操作のエンドツーエンドテスト
+- 認証情報を伏せる構造化ログ
+- クラッシュ／エラー診断
+- 自動更新の方針
+- 配布用コード署名と公証
+- ドラッグ並べ替えのキーボード代替を含むアクセシビリティ確認
 
-## Suggested Delivery Order
+## 実装順の記録と今後の項目
 
-1. Settings screen and versioned settings persistence
-2. Theme selection
-3. Secure credential storage and migration
-4. Settings-based connection import/export
-5. Real preview window and in-preview search (done; diff pending)
-6. Text diff
-7. Recursive grep with cancellation and limits
-8. Mouse back/forward directory navigation
-9. Integrated window chrome and themed form controls
-10. Keyboard file navigation and Space selection
-11. Complete Japanese/English localization
-12. Application icon and launchable macOS package
-13. Streaming transfer queue and progress
-14. `DataSourceProvider` design
-15. Read-only DynamoDB explorer
+以下は当初の実装順です。完了済みの項目も履歴として残しています。今後の作業は、上記の各項目に記載した状況を参照してください。
 
-## Definition Of Done
+1. 設定画面とバージョン付き設定の保存（基本項目は実装済み）
+2. テーマ選択（実装済み）
+3. 認証情報の安全な保存と移行（実装済み）
+4. 設定画面からの接続情報インポート／エクスポート
+5. 実ファイルのプレビュー、検索、編集（実装済み。差分表示は未対応）
+6. テキスト差分表示
+7. キャンセルと上限を備えた再帰 grep
+8. マウスによる戻る／進むのディレクトリ移動（実装済み）
+9. ウィンドウ外観とテーマ対応フォーム部品の統合（部分的に実装済み）
+10. キーボードによるファイル移動と Space キーでの選択
+11. 日本語／英語対応の完了（実装済み）
+12. アプリアイコンと起動可能な macOS パッケージ
+13. ストリーミング転送キューと進捗表示
+14. `DataSourceProvider` の設計
+15. 読み取り専用の DynamoDB エクスプローラー
 
-Every roadmap item should include:
+## 完了条件
 
-- Main/preload/renderer responsibility boundaries
-- Input validation in the main process
-- Secret redaction in errors and logs
-- Cancellation and resource limits for long-running operations
-- Unit tests for pure logic
-- IPC contract tests where APIs are added
-- UI tests for success, cancellation, empty, and failure states
-- `npm run typecheck`, `npm test`, and `npm run build`
+ロードマップの各項目には、次を含めます。
+
+- main/preload/renderer の責務境界
+- main process での入力検証
+- エラーとログでの認証情報の伏せ字化
+- 長時間処理のキャンセルとリソース上限
+- 純粋ロジックのユニットテスト
+- API 追加時の IPC 契約テスト
+- 成功、キャンセル、空状態、失敗状態の UI テスト
+- `npm run typecheck`、`npm test`、`npm run build`

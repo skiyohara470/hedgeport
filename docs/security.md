@@ -1,7 +1,7 @@
 ---
 type: security
 title: セキュリティ境界
-description: HedgePort で secret、filesystem、IPC を扱うときの安全境界。
+description: HedgePort で認証情報、ファイルシステム、IPC を扱うときの安全境界。
 tags: [security, ipc, credentials]
 status: active
 ---
@@ -36,6 +36,7 @@ preload は narrow API bridge です。renderer に `ipcRenderer` を渡しま�
 
 IPC handler は次を守ります。
 
+- BrowserWindow は `contextIsolation` を有効、`nodeIntegration` を無効にする。アプリ外への遷移は拒否し、外部ブラウザへ渡す場合も `http:` / `https:` / `mailto:` に限定する。
 - renderer の TypeScript 型を信用しない。
 - path、encoding、connection target、preview request は main で再検証する。
 - preview save は `event.sender.id` に束縛された session だけを使う。

@@ -12,7 +12,7 @@ status: active
 
 HedgePort は Electron + React + TypeScript のデスクトップアプリです。
 
-- Node.js と npm が必要です。
+- Node.js 22.12.0 以上と npm が必要です（npm は Node.js に同梱されています）。
 - 依存関係は `npm ci` で入れます。
 - 開発起動は `npm run dev` です。
 
@@ -26,7 +26,7 @@ npm run build
 npm run preview
 ```
 
-`npm run build` は `typecheck` のあとに Electron 向け bundle を `out/` へ生成します。配布用 installer はまだ作りません。
+`npm run build` は型チェックのあとに Electron 向けのバンドルを `out/` へ生成します。配布用インストーラーはまだ作りません。
 
 ## 実装時のルール
 

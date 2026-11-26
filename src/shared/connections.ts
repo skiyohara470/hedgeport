@@ -70,7 +70,9 @@ export type ConnectionSecrets = SftpSecrets | S3Secrets
  * メタデータと secret を結合した、provider が接続に使う解決済み接続（main 内専用）。
  */
 export type SftpConnection = SftpConnectionTarget & SftpSecrets
+/** S3 接続先メタデータと認証情報を結合した型（main プロセス内専用）。 */
 export type S3Connection = S3ConnectionTarget & S3Secrets
+/** SFTP または S3 の解決済み接続（main プロセス内専用）。 */
 export type ResolvedConnection = SftpConnection | S3Connection
 
 /**
@@ -78,7 +80,9 @@ export type ResolvedConnection = SftpConnection | S3Connection
  * secret は任意（編集時に空欄なら既存の secret を維持する）。
  */
 export type SftpConnectionDraft = SftpConnectionTarget & Partial<SftpSecrets>
+/** S3 接続の作成・編集用下書き。secret は省略可能。 */
 export type S3ConnectionDraft = S3ConnectionTarget & Partial<S3Secrets>
+/** SFTP または S3 接続の作成・編集用下書き。 */
 export type ConnectionDraft = SftpConnectionDraft | S3ConnectionDraft
 
 /**

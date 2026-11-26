@@ -4,6 +4,10 @@ import { readdir, stat } from 'node:fs/promises'
 
 import type { StorageEntry } from '../shared/storage'
 
+/**
+ * ローカルディレクトリ一覧の結果。
+ * `parentPath` は親ディレクトリが無い（ホームを表示している）場合に `null`。
+ */
 export interface LocalListResult {
   path: string
   parentPath: string | null
