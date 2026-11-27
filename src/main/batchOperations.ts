@@ -1,9 +1,9 @@
 import { basename, isAbsolute, join } from 'node:path'
-import { lstat, mkdir, readFile, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rmdir, unlink, writeFile } from 'node:fs/promises'
 
 import type { ConnectionTarget } from '../shared/connections'
 import type { StorageEntryType } from '../shared/storage'
-import type { BatchOperationResult } from '../shared/transfer'
+import type { BatchOperationResult, BatchTransferProgress } from '../shared/transfer'
 import { isConnectionTarget } from './connectionStore'
 import { createStorageProvider } from './providers/createStorageProvider'
 import { basenameVirtual, isCanonicalVirtualEntryPath, joinVirtualPath } from './providers/pathUtils'
@@ -142,15 +142,22 @@ export async function batchDeleteLocal(items: unknown): Promise<BatchOperationRe
 export async function batchDownloadToDirectory(
   target: unknown,
   items: unknown,
-  localDirectory: unknown
+  localDirectory: unknown,
+  onProgress?: (progress: Omit<BatchTransferProgress, 'transferId'>) => void
 ): Promise<BatchOperationResult> {
   const connection = ensureConnectionTarget(target)
   if (!Array.isArray(items)) throw new Error('Invalid items.')
   if (typeof localDirectory !== 'string' || !isAbsolute(localDirectory)) throw new Error('Invalid local file path.')
   const provider = createStorageProvider(connection)
+  let completed = 0
   return runBatch(items, async (raw) => {
-    const item = assertRemoteBatchItem(raw)
-    await downloadRemoteEntry(provider, item.path, item.type, join(localDirectory, basenameVirtual(item.path)))
+    try {
+      const item = assertRemoteBatchItem(raw)
+      await downloadRemoteEntry(provider, item.path, item.type, join(localDirectory, basenameVirtual(item.path)))
+    } finally {
+      completed += 1
+      onProgress?.({ completed, total: items.length })
+    }
   })
 }
 
@@ -275,7 +282,8 @@ async function downloadRemoteEntry(
 export async function batchUpload(
   target: unknown,
   localPaths: unknown,
-  remoteDirectory: unknown
+  remoteDirectory: unknown,
+  onProgress?: (progress: Omit<BatchTransferProgress, 'transferId'>) => void
 ): Promise<BatchOperationResult> {
   const connection = ensureConnectionTarget(target)
   if (!Array.isArray(localPaths)) throw new Error('Invalid items.')
@@ -286,9 +294,54 @@ export async function batchUpload(
     throw new Error('Invalid remote path.')
   }
   const provider = createStorageProvider(connection)
+  let completed = 0
   return runBatch(localPaths, async (raw) => {
-    if (typeof raw !== 'string' || !isAbsolute(raw)) throw new Error('Invalid local path.')
-    const data = await readFile(raw)
-    await provider.write(joinVirtualPath(remoteDirectory, basename(raw)), new Uint8Array(data))
+    try {
+      const item = typeof raw === 'string' ? { path: raw } : raw
+      if (!item || typeof item !== 'object') throw new Error('Invalid local path.')
+      const localPath = (item as { path?: unknown }).path
+      if (typeof localPath !== 'string' || !isAbsolute(localPath)) throw new Error('Invalid local path.')
+      const localStat = await lstat(localPath)
+      const type = localStat.isDirectory() ? 'directory' : localStat.isFile() ? 'file' : 'unsupported'
+      if (localStat.isSymbolicLink() || type === 'unsupported') throw new Error('Unsupported local entry.')
+      await uploadLocalEntry(provider, localPath, joinVirtualPath(remoteDirectory, basename(localPath)), type)
+    } finally {
+      completed += 1
+      onProgress?.({ completed, total: localPaths.length })
+    }
   })
+}
+
+/**
+ * ローカルのファイル / ディレクトリを再帰的にリモートへ送る。symlink は追跡せず拒否する。
+ */
+async function uploadLocalEntry(
+  provider: ReturnType<typeof createStorageProvider>,
+  localPath: string,
+  remotePath: string,
+  knownType?: 'file' | 'directory'
+): Promise<void> {
+  const stats = await lstat(localPath)
+  if (stats.isSymbolicLink()) throw new Error('Symbolic links cannot be uploaded.')
+  if (stats.isFile() && (!knownType || knownType === 'file')) {
+    const data = await readFile(localPath)
+    await provider.write(remotePath, new Uint8Array(data))
+    return
+  }
+  if (!stats.isDirectory() || (knownType && knownType !== 'directory')) {
+    throw new Error('Local entry changed during upload.')
+  }
+  await provider.createDirectory(remotePath)
+  const children = await readdir(localPath, { withFileTypes: true })
+  for (const child of children) {
+    if (child.name === '.' || child.name === '..' || /[\\/\0]/.test(child.name)) {
+      throw new Error('Local directory contains an unsafe entry name.')
+    }
+    await uploadLocalEntry(
+      provider,
+      join(localPath, child.name),
+      joinVirtualPath(remotePath, child.name),
+      child.isDirectory() ? 'directory' : 'file'
+    )
+  }
 }

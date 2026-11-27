@@ -1271,7 +1271,6 @@ const LocalFilePane = forwardRef<
           <Breadcrumbs
             path={currentPath}
             local
-            disabled={Boolean(error)}
             onNavigate={(nextPath) => void loadDirectory(nextPath, 'push')}
           />
           <button
@@ -1297,7 +1296,7 @@ const LocalFilePane = forwardRef<
           <button
             className="pane-header-button"
             type="button"
-            disabled={!parent || Boolean(error)}
+            disabled={!parent}
             aria-label={t('pane.parent')}
             title={t('pane.parent')}
             onClick={() => parent && void loadDirectory(parent, 'push')}
@@ -1414,6 +1413,17 @@ export function FilerWorkspace({
     status: null,
     error: null,
   })
+  const [transferProgress, setTransferProgress] = useState<{ completed: number; total: number } | null>(null)
+  const activeTransferIdRef = useRef<string | null>(null)
+  const transferSequenceRef = useRef(0)
+  useEffect(() => {
+    const unsubscribe = window.hedgeport.onBatchTransferProgress?.((progress) => {
+      if (progress.transferId === activeTransferIdRef.current) {
+        setTransferProgress({ completed: progress.completed, total: progress.total })
+      }
+    })
+    return () => unsubscribe?.()
+  }, [])
   const [editor, setEditor] = useState<{
     source: PaneKind
     entry: StorageEntry
@@ -1663,14 +1673,18 @@ export function FilerWorkspace({
     pendingKey: TranslationKey,
     doneKey: TranslationKey,
     count: number,
-    action: () => Promise<BatchOperationResult>,
+    action: (transferId: string) => Promise<BatchOperationResult>,
     onSuccessReload?: () => void,
     presetScope?: { tabId: string | null; targetId: string | null }
   ): Promise<void> => {
     const scope = presetScope ?? captureScope()
+    const transferId = `transfer-${Date.now()}-${++transferSequenceRef.current}`
+    const tracksProgress = pendingKey === 'status.uploading' || pendingKey === 'status.downloading'
+    activeTransferIdRef.current = tracksProgress ? transferId : null
+    setTransferProgress(tracksProgress ? { completed: 0, total: count } : null)
     setTransfer({ busy: true, status: { key: pendingKey, params: { count } }, error: null })
     try {
-      const result = await action()
+      const result = await action(transferId)
       if (!isCurrentScope(scope)) return
       // directory download may leave completed children before one child fails; refresh local pane
       // on partial failures too so the visible contents reflect files already written.
@@ -1700,6 +1714,11 @@ export function FilerWorkspace({
           error: reason instanceof Error ? { raw: reason.message } : { key: 'error.operationFailed' },
         })
       }
+    } finally {
+      if (activeTransferIdRef.current === transferId) {
+        activeTransferIdRef.current = null
+        setTransferProgress(null)
+      }
     }
   }
 
@@ -1719,7 +1738,7 @@ export function FilerWorkspace({
       'status.downloading',
       'status.downloaded',
       items.length,
-      () => window.hedgeport.batchDownload(target, items, directory),
+      (transferId) => window.hedgeport.batchDownload(target, items, directory, transferId),
       () => setLocalReloadToken((value) => value + 1)
     )
   }
@@ -1739,7 +1758,7 @@ export function FilerWorkspace({
         'status.downloading',
         'status.downloaded',
         items.length,
-        () => window.hedgeport.batchDownload(target, items, directory),
+        (transferId) => window.hedgeport.batchDownload(target, items, directory, transferId),
         () => {
           if (showLocalFiles && directory === localDir) setLocalReloadToken((value) => value + 1)
         },
@@ -1754,12 +1773,12 @@ export function FilerWorkspace({
   const handleUpload = (selection: StorageEntry[]): void => {
     if (!activeTarget || selection.length === 0) return
     const target = activeTarget
-    const paths = selection.map((entry) => entry.path)
+    const items = selection.map(({ path, type }) => ({ path, type }))
     void runBatch(
       'status.uploading',
       'status.uploaded',
-      paths.length,
-      () => window.hedgeport.batchUpload(target, paths, remoteDir),
+      items.length,
+      (transferId) => window.hedgeport.batchUpload(target, items, remoteDir, transferId),
       () => setRemoteReloadToken((value) => value + 1)
     )
   }
@@ -2858,6 +2877,16 @@ export function FilerWorkspace({
               ? resolveMessage(t, transfer.status)
               : t('status.ready')}
         </span>
+        {transfer.busy && transferProgress && (
+          <span className="transfer-progress">
+            <progress
+              aria-label={t('status.transferProgress')}
+              max={transferProgress.total || 1}
+              value={transferProgress.completed}
+            />
+            {Math.round((transferProgress.completed / Math.max(transferProgress.total, 1)) * 100)}%
+          </span>
+        )}
         <span>list / read / write / delete / mkdir / rename</span>
       </footer>
     </main>

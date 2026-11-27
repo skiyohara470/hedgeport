@@ -148,6 +148,13 @@ export interface BatchOperationResult {
   failures: BatchOperationFailure[]
 }
 
+/** IPC 経由で renderer に通知するバッチ転送の項目単位進捗。 */
+export interface BatchTransferProgress {
+  transferId: string
+  completed: number
+  total: number
+}
+
 /**
  * アプリ内クリップボードのコピー元 / 貼り付け先のペイン種別。
  */

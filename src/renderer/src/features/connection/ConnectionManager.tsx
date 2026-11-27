@@ -81,13 +81,16 @@ export function ConnectionManager({
   }
 
   return (
-    <>
-      {variant === 'welcome' && <div className="brand-mark">HP</div>}
-      <p className="eyebrow">
-        {variant === 'welcome' ? t('connection.welcomeEyebrow') : t('connection.newTabEyebrow')}
-      </p>
-      <h1>{t('connection.choose')}</h1>
-      <p className="muted">{t('connection.chooseHint')}</p>
+    <div className={`connection-manager${variant === 'welcome' ? ' connection-manager-welcome' : ''}`}>
+      <header className="connection-manager-heading">
+        <div>
+          <p className="eyebrow">
+            {variant === 'welcome' ? t('connection.welcomeEyebrow') : t('connection.newTabEyebrow')}
+          </p>
+          <h1>{t('connection.choose')}</h1>
+          <p className="muted">{t('connection.chooseHint')}</p>
+        </div>
+      </header>
       <ConnectionSelect
         targets={targets}
         onSelect={onSelect}
@@ -100,6 +103,6 @@ export function ConnectionManager({
         {t('connection.add')}
       </button>
       <p className="scope-note">{t('connection.storedLocally')}</p>
-    </>
+    </div>
   )
 }

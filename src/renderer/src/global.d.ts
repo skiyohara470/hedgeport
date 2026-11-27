@@ -12,6 +12,7 @@ import type { StorageEntry, StorageEntryType } from '../../shared/storage'
 import type {
   BatchItem,
   BatchOperationResult,
+  BatchTransferProgress,
   ExternalEditSession,
   OpenMode,
   PasteRequest,
@@ -67,13 +68,16 @@ declare global {
     batchDownload: (
       target: ConnectionTarget,
       items: BatchItem[],
-      localDirectory: string
+      localDirectory: string,
+      transferId?: string
     ) => Promise<BatchOperationResult>
     batchUpload: (
       target: ConnectionTarget,
-      localPaths: string[],
-      remoteDirectory: string
+      localPaths: (BatchItem | string)[],
+      remoteDirectory: string,
+      transferId?: string
     ) => Promise<BatchOperationResult>
+    onBatchTransferProgress: (listener: (progress: BatchTransferProgress) => void) => () => void
     paste: (request: PasteRequest) => Promise<BatchOperationResult>
     openLocalPath: (path: string) => Promise<void>
     openLocalPathInVSCode: (path: string) => Promise<void>

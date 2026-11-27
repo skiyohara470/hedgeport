@@ -188,24 +188,86 @@ button:disabled {
 }
 
 .connection-card {
-  width: min(560px, 100%);
-  padding: 40px;
+  width: min(800px, 100%);
+  padding: clamp(28px, 4vw, 44px);
   border: 1px solid var(--c-border);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--c-card-bg);
-  box-shadow: 0 24px 80px rgb(var(--shadow-rgb) / 35%);
+  box-shadow: 0 22px 70px rgb(var(--shadow-rgb) / 28%);
 }
 
-.brand-mark {
+.connection-manager-welcome {
   display: grid;
-  width: 44px;
-  height: 44px;
-  margin-bottom: 24px;
-  place-items: center;
-  border-radius: 10px;
-  color: var(--c-accent-bg);
-  background: var(--c-accent);
-  font-weight: 900;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.connection-manager-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.connection-manager-heading .eyebrow {
+  margin-bottom: 8px;
+}
+
+.connection-card .connection-manager-heading h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 3vw, 2rem);
+  letter-spacing: -0.035em;
+}
+
+.connection-manager-heading .muted {
+  margin: 10px 0 0;
+  line-height: 1.6;
+}
+
+.connection-manager-welcome .connection-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 28px 0 20px;
+}
+
+.connection-manager-welcome .connection-item {
+  min-width: 0;
+}
+
+.connection-manager-welcome .connection-button {
+  min-height: 58px;
+  grid-template-columns: 52px minmax(0, 1fr) 20px;
+  padding-inline: 16px;
+  border-radius: 9px;
+}
+
+.connection-manager-welcome > .secondary-button {
+  width: auto;
+  min-width: 190px;
+  justify-self: start;
+  padding-inline: 22px;
+}
+
+.connection-manager-welcome .scope-note {
+  margin-top: 18px;
+}
+
+@media (max-width: 680px) {
+  .connection-screen {
+    padding: 18px;
+  }
+
+  .connection-card {
+    padding: 26px 22px;
+  }
+
+  .connection-manager-welcome .connection-list {
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: 22px;
+  }
+
+  .connection-manager-welcome > .secondary-button {
+    width: 100%;
+  }
 }
 
 .connection-card h1 {
@@ -1275,6 +1337,19 @@ tbody tr.selected-row td {
 
 .status-error {
   color: var(--c-danger);
+}
+
+.transfer-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 96px;
+}
+
+.transfer-progress progress {
+  width: 72px;
+  height: 8px;
+  accent-color: var(--c-accent);
 }
 
 .external-edit-banner {
