@@ -59,6 +59,7 @@ import {
   type OpenMode,
   type PasteRequest,
   type ReadEncoding,
+  type BatchTransferProgress,
   type TextEncoding,
 } from '../shared/transfer'
 
@@ -330,13 +331,21 @@ app.whenReady().then(() => {
   ipcMain.handle('local:batch-delete', (_event, items: BatchItem[]) => batchDeleteLocal(items))
   ipcMain.handle(
     'storage:batch-download',
-    (_event, target: ConnectionTarget, items: BatchItem[], localDirectory: string) =>
-      batchDownloadToDirectory(target, items, localDirectory)
+    (event, target: ConnectionTarget, items: BatchItem[], localDirectory: string, transferId?: unknown) =>
+      batchDownloadToDirectory(target, items, localDirectory, (progress) => {
+        if (typeof transferId !== 'string' || transferId.length > 128) return
+        const update: BatchTransferProgress = { transferId, ...progress }
+        event.sender.send('storage:transfer-progress', update)
+      })
   )
   ipcMain.handle(
     'storage:batch-upload',
-    (_event, target: ConnectionTarget, localPaths: string[], remoteDirectory: string) =>
-      batchUpload(target, localPaths, remoteDirectory)
+    (event, target: ConnectionTarget, localPaths: string[], remoteDirectory: string, transferId?: unknown) =>
+      batchUpload(target, localPaths, remoteDirectory, (progress) => {
+        if (typeof transferId !== 'string' || transferId.length > 128) return
+        const update: BatchTransferProgress = { transferId, ...progress }
+        event.sender.send('storage:transfer-progress', update)
+      })
   )
   // アプリ内クリップボードの貼り付け（remote/local 4 組合せ）。
   ipcMain.handle('clipboard:paste', (_event, request: PasteRequest) => pasteEntries(request))

@@ -14,6 +14,7 @@ import type { StorageEntryType } from '../shared/storage'
 import type {
   BatchItem,
   BatchOperationResult,
+  BatchTransferProgress,
   ExternalEditSession,
   OpenMode,
   PasteRequest,
@@ -100,13 +101,32 @@ const api = {
   batchDownload: (
     target: ConnectionTarget,
     items: BatchItem[],
-    localDirectory: string
-  ): Promise<BatchOperationResult> => ipcRenderer.invoke('storage:batch-download', target, items, localDirectory),
+    localDirectory: string,
+    transferId?: string
+  ): Promise<BatchOperationResult> =>
+    ipcRenderer.invoke('storage:batch-download', target, items, localDirectory, transferId),
   batchUpload: (
     target: ConnectionTarget,
-    localPaths: string[],
-    remoteDirectory: string
-  ): Promise<BatchOperationResult> => ipcRenderer.invoke('storage:batch-upload', target, localPaths, remoteDirectory),
+    localPaths: (BatchItem | string)[],
+    remoteDirectory: string,
+    transferId?: string
+  ): Promise<BatchOperationResult> =>
+    ipcRenderer.invoke('storage:batch-upload', target, localPaths, remoteDirectory, transferId),
+  onBatchTransferProgress: (listener: (progress: BatchTransferProgress) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, raw: unknown): void => {
+      if (
+        raw &&
+        typeof raw === 'object' &&
+        typeof (raw as BatchTransferProgress).transferId === 'string' &&
+        typeof (raw as BatchTransferProgress).completed === 'number' &&
+        typeof (raw as BatchTransferProgress).total === 'number'
+      ) {
+        listener(raw as BatchTransferProgress)
+      }
+    }
+    ipcRenderer.on('storage:transfer-progress', handler)
+    return () => ipcRenderer.removeListener('storage:transfer-progress', handler)
+  },
   paste: (request: PasteRequest): Promise<BatchOperationResult> => ipcRenderer.invoke('clipboard:paste', request),
   openLocalPath: (path: string): Promise<void> => ipcRenderer.invoke('local:open-path', path),
   openLocalPathInVSCode: (path: string): Promise<void> => ipcRenderer.invoke('local:open-in-vscode', path),
